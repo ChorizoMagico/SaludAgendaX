@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import Paciente, EPS
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 class PacienteRegistroSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=True)
@@ -47,3 +48,15 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
         )
 
         return paciente
+    
+class PacienteTokenSerializer(TokenObtainPairSerializer):
+    """Serializer personalizado para login"""
+    
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        return {
+            'access': data['access'],
+            'refresh': data['refresh'],
+            'user_id': self.user.id,
+            'email': self.user.email,
+        }

@@ -2,6 +2,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .serializers import PacienteRegistroSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import PacienteTokenSerializer
 
 @api_view(['POST'])
 def registro_paciente(request):
@@ -20,3 +22,17 @@ def registro_paciente(request):
         }, status=status.HTTP_201_CREATED)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PacienteLoginView(TokenObtainPairView):
+    """
+    Endpoint de login para pacientes
+    POST /api/pacientes/login
+    
+    Body:
+    {
+        "username": "juan@gmail.com",
+        "password": "Password123"
+    }
+    """
+    serializer_class = PacienteTokenSerializer
