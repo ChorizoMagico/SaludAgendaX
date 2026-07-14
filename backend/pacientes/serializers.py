@@ -90,25 +90,37 @@ class ResetContraseniaSerializer(serializers.Serializer):
 
 class PacientePerfilSerializer(serializers.ModelSerializer):
     """Serializer para ver y editar perfil del paciente"""
-    email = serializers.CharField(source='usuario.email', read_only=True)
-    primer_nombre = serializers.CharField(source='usuario.first_name')
-    apellido = serializers.CharField(source='usuario.last_name')
+    email = serializers.SerializerMethodField()
+    primer_nombre = serializers.SerializerMethodField()
+    apellido = serializers.SerializerMethodField()
 
     class Meta:
         model = Paciente
         fields = ['id', 'email', 'primer_nombre', 'apellido', 'tipo_documento', 
                   'num_documento', 'fecha_nacimiento', 'eps', 'direccion']
 
+    def get_email(self, obj):
+        return obj.usuario.email
+    
+    def get_primer_nombre(self, obj):
+        return obj.usuario.first_name
+    
+    def get_apellido(self, obj):
+        return obj.usuario.last_name
+
     def update(self, instance, validated_data):
         """Actualizar perfil del paciente"""
-        usuario_data = validated_data.pop('usuario', {})
-        
-        if usuario_data:
-            instance.usuario.first_name = usuario_data.get('first_name', instance.usuario.first_name)
-            instance.usuario.last_name = usuario_data.get('last_name', instance.usuario.last_name)
-            instance.usuario.save()
+        # Actualizar usuario
+        if 'primer_nombre' in self.initial_data:
+            instance.usuario.first_name = self.initial_data.get('primer_nombre', '')
+        if 'apellido' in self.initial_data:
+            instance.usuario.last_name = self.initial_data.get('apellido', '')
+        instance.usuario.save()
 
+        # Actualizar paciente
         for attr, value in validated_data.items():
-            setattr(instance, attr, value)
+            if hasattr(instance, attr):
+                setattr(instance, attr, value)
         instance.save()
+        
         return instance

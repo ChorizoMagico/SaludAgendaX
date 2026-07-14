@@ -136,12 +136,14 @@ def perfil_paciente(request):
         "direccion": "Cra 5 #10-50"
     }
     """
+    from .models import Paciente
+    
     try:
-        paciente = request.user.paciente
-    except:
+        paciente = Paciente.objects.get(usuario=request.user)
+    except Paciente.DoesNotExist:
         return Response({
             'error': 'El usuario no tiene perfil de paciente'
-        }, status=status.HTTP_400_BAD_REQUEST)
+        }, status=status.HTTP_404_NOT_FOUND)
     
     if request.method == 'GET':
         serializer = PacientePerfilSerializer(paciente)
