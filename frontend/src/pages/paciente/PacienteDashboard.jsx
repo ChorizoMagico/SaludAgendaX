@@ -9,7 +9,20 @@ import {
   getMedicoPorId,
   citasStore,
 } from "../../context/mockData";
-import { TopBar, DashboardNav, navMobilePadding, Campo, CampoSolo, EstadoBadge } from "../../context/ui";
+import {
+  TopBar,
+  DashboardNav,
+  navMobilePadding,
+  Campo,
+  CampoSolo,
+  EstadoBadge,
+  StepTracker,
+  OpcionPill,
+  BotonContinuar,
+  FilaConfirmacion,
+  ConfirmacionInline,
+  EleccionInline,
+} from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
 
 const TABS = [
@@ -71,6 +84,10 @@ export default function PacienteDashboard() {
   const [citaReprogramando, setCitaReprogramando] = useState(null);
   const [wizardMensaje, setWizardMensaje] = useState("");
 
+  // Antes de entrar al wizard de reprogramación, se pregunta si se quiere
+  // mantener el mismo médico o buscar otro.
+  const [citaPreguntandoReprogramar, setCitaPreguntandoReprogramar] = useState(null);
+
   // Confirmación inline de cancelación
   const [citaCancelando, setCitaCancelando] = useState(null);
   const [motivoCancelacion, setMotivoCancelacion] = useState("");
@@ -129,19 +146,24 @@ export default function PacienteDashboard() {
     if (tab === "citas" && id !== "citas") {
       setCitaCancelando(null);
       setMotivoCancelacion("");
+      setCitaPreguntandoReprogramar(null);
     }
     setTab(id);
   }
 
-  function iniciarReprogramacion(cita) {
+  // Arranca el wizard de reprogramación. mantenerMedico=true deja el
+  // médico ya elegido y salta directo a horario; false solo conserva
+  // especialidad+sede y deja elegir un médico distinto.
+  function iniciarReprogramacion(cita, mantenerMedico) {
     setCitaReprogramando(cita.id);
     setWizardEspecialidad(cita.especialidad);
     setWizardSede(cita.sede);
-    setWizardMedicoId(cita.medicoId);
+    setWizardMedicoId(mantenerMedico ? cita.medicoId : null);
     setWizardMotivo(cita.motivo);
     setWizardFecha(cita.fecha < hoyISO() ? fechaPorDefecto() : cita.fecha);
     setWizardFranja(null);
-    setWizardPaso(4); // especialidad, sede y médico ya definidos: solo elige nueva fecha/franja
+    setWizardPaso(mantenerMedico ? 4 : 3);
+    setCitaPreguntandoReprogramar(null);
     setTab("agendar");
   }
 
@@ -297,15 +319,29 @@ export default function PacienteDashboard() {
                       key={c.id}
                       cita={c}
                       medico={nombreMedico(c.medicoId)}
-                      onReprogramar={() => iniciarReprogramacion(c)}
+                      onReprogramar={() => setCitaPreguntandoReprogramar(c.id)}
                       onCancelar={() => setCitaCancelando(c.id)}
-                      cancelando={citaCancelando === c.id}
                     >
+                      {citaPreguntandoReprogramar === c.id && (
+                        <EleccionInline
+                          pregunta={`¿Deseas reprogramar con Dr(a). ${nombreMedico(c.medicoId)} o buscar otro médico?`}
+                          opciones={[
+                            { label: `Mantener con Dr(a). ${nombreMedico(c.medicoId)}`, destacada: true, onClick: () => iniciarReprogramacion(c, true) },
+                            { label: "Buscar otro médico", onClick: () => iniciarReprogramacion(c, false) },
+                          ]}
+                        />
+                      )}
+
                       {citaCancelando === c.id && (
-                        <div className="mt-4 pt-4 border-t border-dashed border-[#DCE8E5]">
-                          <p className="text-sm font-semibold text-[#0F3D3E] mb-2">
-                            ¿Seguro que quieres cancelar esta cita?
-                          </p>
+                        <ConfirmacionInline
+                          pregunta="¿Seguro que quieres cancelar esta cita?"
+                          textoConfirmar="Sí, cancelar cita"
+                          onConfirmar={() => confirmarCancelacion(c.id)}
+                          onCancelar={() => {
+                            setCitaCancelando(null);
+                            setMotivoCancelacion("");
+                          }}
+                        >
                           <input
                             type="text"
                             placeholder="Motivo (opcional)"
@@ -313,21 +349,7 @@ export default function PacienteDashboard() {
                             onChange={(e) => setMotivoCancelacion(e.target.value)}
                             className="w-full border border-[#DCE8E5] rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-[#0E9668]"
                           />
-                          <div className="flex flex-col sm:flex-row gap-2">
-                            <button
-                              onClick={() => confirmarCancelacion(c.id)}
-                              className="bg-[#BA1A1A] text-white px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity"
-                            >
-                              Sí, cancelar cita
-                            </button>
-                            <button
-                              onClick={() => setCitaCancelando(null)}
-                              className="text-[#48605C] px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#EDF4F2] transition-colors"
-                            >
-                              No, mantener
-                            </button>
-                          </div>
-                        </div>
+                        </ConfirmacionInline>
                       )}
                     </TicketCita>
                   ))}
@@ -427,23 +449,13 @@ export default function PacienteDashboard() {
                   )}
                   <div className="flex flex-col gap-2">
                     {medicosFiltrados.map((m) => (
-                      <button
+                      <OpcionPill
                         key={m.id}
+                        seleccionado={wizardMedicoId === m.id}
                         onClick={() => setWizardMedicoId(m.id)}
-                        className={`flex items-center gap-3 text-left px-4 py-3 rounded-xl border transition-colors duration-200 ${
-                          wizardMedicoId === m.id ? "border-[#0E9668] bg-[#D3F3E6]" : "border-[#DCE8E5] hover:border-[#0E9668]"
-                        }`}
-                      >
-                        <span className="flex items-center justify-center w-9 h-9 rounded-full bg-white shrink-0">
-                          <span className="material-symbols-outlined text-[#0E9668] text-xl">stethoscope</span>
-                        </span>
-                        <span className="font-semibold text-[#0F3D3E]">
-                          {m.nombre} {m.apellido}
-                        </span>
-                        {wizardMedicoId === m.id && (
-                          <span className="material-symbols-outlined text-[#0E9668] ml-auto">check_circle</span>
-                        )}
-                      </button>
+                        icon="stethoscope"
+                        label={`${m.nombre} ${m.apellido}`}
+                      />
                     ))}
                   </div>
                   <div className="flex items-center gap-4 mt-2">
@@ -501,11 +513,9 @@ export default function PacienteDashboard() {
 
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardFecha || !wizardFranja} onClick={() => setWizardPaso(5)} />
-                    {!citaReprogramando && (
-                      <button onClick={() => setWizardPaso(3)} className="text-sm text-[#48605C] hover:underline">
-                        ← Cambiar médico
-                      </button>
-                    )}
+                    <button onClick={() => setWizardPaso(3)} className="text-sm text-[#48605C] hover:underline">
+                      ← Cambiar médico
+                    </button>
                   </div>
                 </div>
               )}
@@ -687,88 +697,6 @@ function StatChip({ icon, valor, etiqueta, color, tinte, truncar }) {
         <p className={`sax-display text-2xl text-[#0F3D3E] ${truncar ? "truncate" : ""}`}>{valor}</p>
         <p className="text-xs text-[#48605C] uppercase tracking-wide">{etiqueta}</p>
       </div>
-    </div>
-  );
-}
-
-// Rastreador de pasos del wizard — el orden sí importa (flujo real de 5 pasos)
-function StepTracker({ pasos, actual }) {
-  return (
-    <div className="flex items-center">
-      {pasos.map((label, i) => {
-        const paso = i + 1;
-        const hecho = paso < actual;
-        const activo = paso === actual;
-        return (
-          <div key={label} className="flex items-center flex-1 last:flex-none">
-            <div className="flex flex-col items-center gap-1.5 shrink-0">
-              <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold sax-mono transition-colors duration-200 ${
-                  hecho
-                    ? "bg-[#0E9668] text-white"
-                    : activo
-                    ? "bg-white border-2 border-[#0E9668] text-[#0E9668]"
-                    : "bg-[#F3F8F7] text-[#9AAFAB]"
-                }`}
-              >
-                {hecho ? <span className="material-symbols-outlined text-base">check</span> : paso}
-              </div>
-              <span
-                className={`text-[11px] uppercase tracking-wide text-center hidden sm:block ${
-                  activo ? "text-[#0F3D3E] font-semibold" : "text-[#9AAFAB]"
-                }`}
-              >
-                {label}
-              </span>
-            </div>
-            {paso !== pasos.length && (
-              <div className={`h-0.5 flex-1 mx-1 rounded ${hecho ? "bg-[#0E9668]" : "bg-[#DCE8E5]"}`} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function OpcionPill({ seleccionado, onClick, icon, label }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2 text-sm text-left px-4 py-3 rounded-xl border transition-colors duration-200 ${
-        seleccionado
-          ? "border-[#0E9668] bg-[#D3F3E6] text-[#0E9668] font-semibold"
-          : "border-[#DCE8E5] hover:border-[#0E9668]"
-      }`}
-    >
-      <span className="material-symbols-outlined text-lg">{icon}</span>
-      {label}
-      {seleccionado && <span className="material-symbols-outlined text-lg ml-auto">check_circle</span>}
-    </button>
-  );
-}
-
-function BotonContinuar({ disabled, onClick }) {
-  return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      className="self-start bg-[#0E9668] text-white px-6 py-2.5 rounded-full font-semibold hover:bg-[#0C7D57] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-200 mt-2 flex items-center gap-1.5"
-    >
-      Continuar
-      <span className="material-symbols-outlined text-lg">arrow_forward</span>
-    </button>
-  );
-}
-
-function FilaConfirmacion({ etiqueta, valor, icon, mono }) {
-  return (
-    <div className="flex items-center justify-between px-5 py-3.5 gap-4">
-      <dt className="text-[#48605C] text-sm flex items-center gap-2">
-        {icon && <span className="material-symbols-outlined text-lg text-[#9AAFAB]">{icon}</span>}
-        {etiqueta}
-      </dt>
-      <dd className={`font-semibold text-[#0F3D3E] text-right ${mono ? "sax-mono" : ""}`}>{valor}</dd>
     </div>
   );
 }
