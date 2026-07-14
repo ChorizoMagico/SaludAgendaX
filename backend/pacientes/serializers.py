@@ -148,3 +148,15 @@ class CitaCancelacionSerializer(serializers.ModelSerializer):
         model = Cita
         fields = ['id', 'estado', 'motivo', 'actualizado_en']
         read_only_fields = ['id', 'actualizado_en']
+
+
+class CitaSerializer(serializers.ModelSerializer):
+    """Serializer para listar citas del paciente"""
+    medico_nombre = serializers.CharField(source='medico.usuario.get_full_name', read_only=True)
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
+    
+    class Meta:
+        model = Cita
+        fields = ['id', 'medico_nombre', 'especialidad_nombre', 'fecha_hora', 
+                  'estado', 'motivo', 'creado_en', 'actualizado_en']
+        read_only_fields = fields

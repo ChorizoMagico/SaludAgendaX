@@ -12,7 +12,8 @@ from .serializers import (
     RecuperarContraseniaSerializer, 
     ResetContraseniaSerializer,
     PacientePerfilSerializer,
-    CitaCancelacionSerializer
+    CitaCancelacionSerializer,
+    CitaSerializer  
 )
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 
@@ -271,3 +272,48 @@ def cancelar_cita(request, cita_id):
         'mensaje': 'Cita cancelada exitosamente',
         'cita': serializer.data
     }, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def historial_citas_paciente(request):
+    """
+    Obtener historial de citas del paciente autenticado
+    
+    GET /api/citas/historial/
+    
+    Parámetros de query (opcionales):
+    - page: número de página (default 1)
+    - estado: filtrar por estado (PENDIENTE, CONFIRMADA, CANCELADA)
+    """
+    from .models import Paciente, Cita
+    from rest_framework.pagination import PageNumberPagination
+    
+    try:
+        paciente = Paciente.objects.get(usuario=request.user)
+    except Paciente.DoesNotExist:
+        return Response({
+            'error': 'Usuario no es paciente'
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    # Obtener citas del paciente
+    citas = Cita.objects.filter(paciente=paciente).order_by('-fecha_hora')
+    
+    # Filtrar por estado si se proporciona
+    estado_filter = request.query_params.get('estado')
+    if estado_filter:
+        citas = citas.filter(estado=estado_filter)
+    
+    # Paginar
+    paginator = PageNumberPagination()
+    paginator.page_size = 10
+    paginated_citas = paginator.paginate_queryset(citas, request)
+    
+    serializer = CitaSerializer(paginated_citas, many=True)
+    
+    return paginator.get_paginated_response({
+        'paciente': {
+            'id': paciente.id,
+            'nombre': paciente.usuario.get_full_name() or paciente.usuario.email
+        },
+        'citas': serializer.data
+    })
