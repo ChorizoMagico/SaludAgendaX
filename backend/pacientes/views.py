@@ -12,8 +12,9 @@ from .serializers import (
     RecuperarContraseniaSerializer, 
     ResetContraseniaSerializer,
     PacientePerfilSerializer,
+    CitaSerializer,
     CitaCancelacionSerializer,
-    CitaSerializer  
+    CitaListSerializer
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
@@ -23,6 +24,7 @@ from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativ
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import permission_classes
 
 @api_view(['POST'])
 def registro_paciente(request):
@@ -427,3 +429,4 @@ class CitaViewSet(ModelViewSet):
             },
             status=status.HTTP_201_CREATED,
         )
+
