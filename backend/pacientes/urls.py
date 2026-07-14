@@ -4,4 +4,6 @@ from . import views
 urlpatterns = [
     path('registro/', views.registro_paciente, name='registro_paciente'),
     path('login/', views.PacienteLoginView.as_view(), name='login'),
+    path('recuperar-contrasena/', views.recuperar_contrasena, name='recuperar_contrasena'),
+    path('reset-contrasena/', views.reset_contrasena, name='reset_contrasena'),
 ]
