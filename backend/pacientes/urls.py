@@ -8,4 +8,5 @@ urlpatterns = [
     path('reset-contrasena/', views.reset_contrasena, name='reset_contrasena'),
     path('perfil/', views.perfil_paciente, name='perfil_paciente'),
     path('disponibilidad/', views.disponibilidad_medica, name='disponibilidad_medica'),
+    path('citas/<int:cita_id>/cancelar/', views.cancelar_cita, name='cancelar_cita'),
 ]

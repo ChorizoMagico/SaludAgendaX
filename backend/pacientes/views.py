@@ -11,7 +11,8 @@ from .serializers import (
     PacienteTokenSerializer,
     RecuperarContraseniaSerializer, 
     ResetContraseniaSerializer,
-    PacientePerfilSerializer
+    PacientePerfilSerializer,
+    CitaCancelacionSerializer
 )
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 
@@ -217,4 +218,56 @@ def disponibilidad_medica(request):
         'duracion_minutos': duracion,
         'slots_disponibles': slots,
         'total_slots': len(slots)
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def cancelar_cita(request, cita_id):
+    """
+    Cancelar una cita existente
+    
+    PATCH /api/citas/:id/cancelar/
+    
+    Body (opcional):
+    {
+        "motivo_cancelacion": "Tengo que viajar"
+    }
+    """
+    from .models import Cita, Paciente
+    
+    try:
+        cita = Cita.objects.get(id=cita_id)
+    except Cita.DoesNotExist:
+        return Response({
+            'error': 'Cita no encontrada'
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    # Verificar permisos: solo el paciente propietario puede cancelar
+    try:
+        paciente = Paciente.objects.get(usuario=request.user)
+        if cita.paciente != paciente:
+            return Response({
+                'error': 'No tienes permiso para cancelar esta cita'
+            }, status=status.HTTP_403_FORBIDDEN)
+    except Paciente.DoesNotExist:
+        return Response({
+            'error': 'Usuario no es paciente'
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    # Verificar que no esté ya cancelada
+    if cita.estado == 'CANCELADA':
+        return Response({
+            'error': 'Esta cita ya ha sido cancelada'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Cancelar cita
+    cita.estado = 'CANCELADA'
+    cita.motivo = request.data.get('motivo_cancelacion', 'Cancelación solicitada por paciente')
+    cita.save()
+    
+    serializer = CitaCancelacionSerializer(cita)
+    return Response({
+        'mensaje': 'Cita cancelada exitosamente',
+        'cita': serializer.data
     }, status=status.HTTP_200_OK)

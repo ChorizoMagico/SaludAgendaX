@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.models import User
-from .models import Paciente, EPS
+from .models import Paciente, EPS, Cita
 
 
 class PacienteRegistroSerializer(serializers.ModelSerializer):
@@ -139,3 +139,12 @@ class DisponibilidadFilterSerializer(serializers.Serializer):
     fecha_inicio = serializers.DateTimeField(required=True)
     fecha_fin = serializers.DateTimeField(required=True)
     duracion_minutos = serializers.IntegerField(default=30, required=False)
+
+
+class CitaCancelacionSerializer(serializers.ModelSerializer):
+    """Serializer para cancelar cita"""
+    
+    class Meta:
+        model = Cita
+        fields = ['id', 'estado', 'motivo', 'actualizado_en']
+        read_only_fields = ['id', 'actualizado_en']
