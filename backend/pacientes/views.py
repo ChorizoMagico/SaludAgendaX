@@ -444,27 +444,15 @@ class CitaViewSet(ModelViewSet):
         return Response(
             {
                 'status': 'success',
-                'data': response.data,
+                'code': 201,
+                'message': 'Cita creada exitosamente',
+                'data': response_serializer.data,
+                'agenda': {
+                    'medico': cita.medico_id,
+                    'fecha': cita.fecha,
+                    'citas_ocupadas': agenda_ocupada,
+                },
+                'alerts': serializer.context.get('alerts', []),
             },
-            status=response.status_code,
+            status=status.HTTP_201_CREATED,
         )
-
-class DashboardMetricsView(APIView):
-    # Solo administrativos/superadmin accede
-    permission_classes = [IsAdminUser]
-
-    def get(self, request):
-        hoy = timezone.now().date()
-        
-        # Consultas de métricas
-        stats = Cita.objects.aggregate(
-            total=Count('id'),
-            citas_hoy=Count('id', filter=Q(fecha=hoy)),
-            canceladas=Count('id', filter=Q(estado='CANCELADA')),
-            pendientes=Count('id', filter=Q(estado='PENDIENTE'))
-        )
-        
-        return Response({
-            "fecha_corte": hoy,
-            "metricas": stats
-        })
