@@ -517,7 +517,6 @@ function FormularioNuevoMedico({ onCancelar, onCreado }) {
     telefono: "",
     direccion: "",
     numeroRegistro: "",
-    titulo: "",
     sede: SEDES[0] || "",
   });
   const [especialidadesSel, setEspecialidadesSel] = useState([]);
@@ -574,15 +573,12 @@ function FormularioNuevoMedico({ onCancelar, onCreado }) {
           <Campo label="Teléfono" name="telefono" value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
           <Campo label="Dirección" name="direccion" value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Campo
+        <Campo
             label="N.º de registro médico"
             name="numeroRegistro"
             value={form.numeroRegistro}
             onChange={(e) => setForm({ ...form, numeroRegistro: e.target.value })}
-          />
-          <Campo label="Título académico" name="titulo" value={form.titulo} onChange={(e) => setForm({ ...form, titulo: e.target.value })} />
-        </div>
+        />
 
         <div>
           <label className="text-sm font-semibold text-[#0F3D3E] mb-2 block">Especialidades</label>
