@@ -124,3 +124,18 @@ class PacientePerfilSerializer(serializers.ModelSerializer):
         instance.save()
         
         return instance
+    
+
+class DisponibilidadSerializer(serializers.Serializer):
+    """Serializer para retornar slots disponibles"""
+    fecha_hora = serializers.DateTimeField()
+    disponible = serializers.BooleanField()
+
+
+class DisponibilidadFilterSerializer(serializers.Serializer):
+    """Serializer para validar filtros de disponibilidad"""
+    medico_id = serializers.IntegerField(required=False)
+    especialidad_id = serializers.IntegerField(required=False)
+    fecha_inicio = serializers.DateTimeField(required=True)
+    fecha_fin = serializers.DateTimeField(required=True)
+    duracion_minutos = serializers.IntegerField(default=30, required=False)

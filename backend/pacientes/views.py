@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
+from datetime import datetime
 
 from .serializers import (
     PacienteRegistroSerializer, 
@@ -158,3 +159,62 @@ def perfil_paciente(request):
                 'paciente': serializer.data
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def disponibilidad_medica(request):
+    """
+    Endpoint para obtener slots disponibles de un médico
+    
+    GET /api/disponibilidad/?medico_id=1&fecha_inicio=2026-07-20T08:00:00&fecha_fin=2026-07-26T18:00:00
+    
+    Parámetros:
+    - medico_id: ID del médico (requerido)
+    - fecha_inicio: Fecha inicio (requerido)
+    - fecha_fin: Fecha fin (requerido)
+    - duracion_minutos: Duración de cita en minutos (default 30)
+    """
+    from .disponibilidad import calcular_slots_disponibles
+    from .models import Medico
+    
+    # Validar parámetros
+    medico_id = request.query_params.get('medico_id')
+    fecha_inicio = request.query_params.get('fecha_inicio')
+    fecha_fin = request.query_params.get('fecha_fin')
+    duracion = request.query_params.get('duracion_minutos', 30)
+    
+    if not all([medico_id, fecha_inicio, fecha_fin]):
+        return Response({
+            'error': 'Parámetros requeridos: medico_id, fecha_inicio, fecha_fin'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        medico = Medico.objects.get(id=medico_id)
+    except Medico.DoesNotExist:
+        return Response({
+            'error': 'Médico no encontrado'
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        fecha_inicio_dt = datetime.fromisoformat(fecha_inicio)
+        fecha_fin_dt = datetime.fromisoformat(fecha_fin)
+    except ValueError:
+        return Response({
+            'error': 'Formato de fecha inválido. Usa ISO format: 2026-07-20T08:00:00'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Calcular slots
+    slots = calcular_slots_disponibles(medico, fecha_inicio_dt, fecha_fin_dt, int(duracion))
+    
+    return Response({
+        'medico': {
+            'id': medico.id,
+            'nombre': str(medico)
+        },
+        'fecha_inicio': fecha_inicio,
+        'fecha_fin': fecha_fin,
+        'duracion_minutos': duracion,
+        'slots_disponibles': slots,
+        'total_slots': len(slots)
+    }, status=status.HTTP_200_OK)

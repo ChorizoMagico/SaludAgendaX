@@ -104,3 +104,45 @@ class TopeEPS(models.Model):
 
     def __str__(self):
         return f"Tope para {self.eps.nombre}: {self.limite_citas} citas ({self.tipo_periodo})"
+    
+
+class HorarioMedico(models.Model):
+    """Modelo para definir horarios de atención de médicos"""
+    DIAS_SEMANA = [
+        (0, 'Lunes'),
+        (1, 'Martes'),
+        (2, 'Miércoles'),
+        (3, 'Jueves'),
+        (4, 'Viernes'),
+        (5, 'Sábado'),
+        (6, 'Domingo'),
+    ]
+    
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='horarios')
+    dia_semana = models.IntegerField(choices=DIAS_SEMANA)
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'horario_medico'
+        unique_together = ['medico', 'dia_semana']
+        ordering = ['dia_semana', 'hora_inicio']
+
+    def __str__(self):
+        return f"{self.medico} - {self.get_dia_semana_display()}: {self.hora_inicio} a {self.hora_fin}"
+
+
+class ExcepcionHorario(models.Model):
+    """Modelo para excepciones (días libres, cerrado, etc)"""
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='excepciones_horario')
+    fecha = models.DateField()
+    motivo = models.CharField(max_length=100, blank=True)
+    disponible = models.BooleanField(default=False, help_text="¿Está disponible este día?")
+
+    class Meta:
+        db_table = 'excepcion_horario'
+        unique_together = ['medico', 'fecha']
+
+    def __str__(self):
+        return f"{self.medico} - {self.fecha}: {self.motivo}"
