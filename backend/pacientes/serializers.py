@@ -270,3 +270,4 @@ class CitaSerializer(serializers.ModelSerializer):
         cita, alerts = CitaService.create_cita(validated_data)
         self.context['alerts'] = alerts
         return cita
+    
