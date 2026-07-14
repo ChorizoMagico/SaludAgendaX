@@ -55,12 +55,6 @@ const accesos = [
     desc: "Gestiona médicos, especialidades, agendamiento y pacientes del sistema.",
     to: "/registro?rol=administrativo",
   },
-  {
-    icon: "shield_person",
-    titulo: "Superadministrador",
-    desc: "Configura reglas de negocio, topes por EPS y parámetros globales del sistema.",
-    to: "/registro?rol=superadministrador",
-  },
 ];
 
 // Enlace de navegación desktop: solo se resalta al pasar el mouse, sin desplazar el layout
@@ -215,7 +209,7 @@ export default function Principal() {
             <h2 className="text-2xl sm:text-3xl font-semibold text-[#0F3D3E] mb-2">Bienvenido a SaludAgendaX</h2>
             <p className="text-[#48605C] mb-8 sm:mb-10">Elige tu tipo de usuario para registrarte.</p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
               {accesos.map((a) => (
                 <div
                   key={a.titulo}

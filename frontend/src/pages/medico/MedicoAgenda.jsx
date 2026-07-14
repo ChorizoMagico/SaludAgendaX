@@ -7,15 +7,13 @@ import startOfMonth from "date-fns/startOfMonth";
 import addMonths from "date-fns/addMonths";
 import getDay from "date-fns/getDay";
 import addDays from "date-fns/addDays";
-import addHours from "date-fns/addHours";
+import addMinutes from "date-fns/addMinutes";
 import es from "date-fns/locale/es";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 
-import { HORARIO_BASE, getPacientePorId, citasStore, DURACION_CITA_MIN } from "../../context/mockData";
-import { TopBar, DashboardNav, navMobilePadding, Campo, CampoSolo } from "../../context/ui";
+import { DIAS_SEMANA, getPacientePorId, citasStore, excepcionesStore, DURACION_CITA_MIN } from "../../context/mockData";
+import { TopBar, DashboardNav, navMobilePadding, Campo, CampoSolo, DashboardStyles } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
-
-const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"];
 
 const TABS = [
   { id: "agenda", label: "Mi agenda", icon: "calendar_month" },
@@ -40,7 +38,7 @@ const localizer = dateFnsLocalizer({
   locales: { es },
 });
 
-// Índice del día (getDay(): 0=domingo … 6=sábado) -> nombre usado en HORARIO_BASE
+// Índice del día (getDay(): 0=domingo … 6=sábado) -> nombre usado en el horario del médico
 const NOMBRE_POR_INDICE = { 1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Viernes" };
 
 function combinarFechaYHora(fecha, horaStr) {
@@ -81,10 +79,16 @@ export default function MedicoMiAgenda() {
   const todasLasCitas = useSyncExternalStore(citasStore.subscribe, citasStore.getSnapshot);
   const citas = todasLasCitas.filter((c) => c.medicoId === medico.id);
 
+  // Excepciones ahora viven en un store compartido (excepcionesStore) en
+  // vez de estado local: así el panel administrativo (TabCitas) también
+  // puede consultarlas al agendar/reprogramar citas por un paciente y
+  // evitar ofrecer horarios que este médico ya bloqueó.
+  const todasLasExcepciones = useSyncExternalStore(excepcionesStore.subscribe, excepcionesStore.getSnapshot);
+  const excepciones = todasLasExcepciones.filter((ex) => ex.medicoId === medico.id);
+
   const [vistaCalendario, setVistaCalendario] = useState(Views.WORK_WEEK); // WORK_WEEK = lunes a viernes
   const [fechaCalendario, setFechaCalendario] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [citaActiva, setCitaActiva] = useState(null); // detalle en panel lateral
-  const [excepciones, setExcepciones] = useState([]);
   const [nuevaExcepcion, setNuevaExcepcion] = useState({
     fecha: "",
     tipo: "bloqueo",
@@ -95,7 +99,9 @@ export default function MedicoMiAgenda() {
   });
   const [errorExcepcion, setErrorExcepcion] = useState("");
 
-  // Convierte las citas (con fecha/hora reales) en eventos para react-big-calendar
+  // Convierte las citas (con fecha/hora reales) en eventos para react-big-calendar.
+  // El evento dura exactamente DURACION_CITA_MIN minutos (antes se forzaba
+  // a 1 hora fija con addHours, sin importar la duración real de la cita).
   const eventos = useMemo(
     () =>
       citas.map((c) => {
@@ -104,7 +110,7 @@ export default function MedicoMiAgenda() {
           id: c.id,
           title: `${nombrePaciente(c.pacienteId)} — ${c.motivo || c.especialidad}`,
           start: inicio,
-          end: addHours(inicio, 1),
+          end: addMinutes(inicio, DURACION_CITA_MIN),
           resource: c,
         };
       }),
@@ -203,7 +209,7 @@ export default function MedicoMiAgenda() {
       return;
     }
 
-    setExcepciones((prev) => [...prev, { id: Date.now(), ...nuevaExcepcion }]);
+    excepcionesStore.agregar({ ...nuevaExcepcion, medicoId: medico.id });
     setNuevaExcepcion({
       fecha: "",
       tipo: "bloqueo",
@@ -215,7 +221,7 @@ export default function MedicoMiAgenda() {
   }
 
   function eliminarExcepcion(id) {
-    setExcepciones((prev) => prev.filter((e) => e.id !== id));
+    excepcionesStore.eliminar(id);
   }
 
   // Color del evento según estado (agendada / completada / reprogramada / cancelada)
@@ -255,8 +261,11 @@ export default function MedicoMiAgenda() {
     return {};
   }
 
-  // Sombrea franjas fuera del horario base y franjas bloqueadas puntualmente,
-  // con un patrón de rayas bien distinto del blanco disponible (antes eran dos grises casi iguales)
+  // Sombrea franjas fuera del horario del médico y franjas bloqueadas
+  // puntualmente. Usa `medico.horario` (editable por administración por
+  // médico) en vez de la plantilla genérica HORARIO_BASE — antes esta
+  // franja siempre mostraba el mismo horario "de fábrica" sin importar lo
+  // que el admin hubiera configurado para este médico en particular.
   function slotPropGetter(date) {
     const fechaStr = format(date, "yyyy-MM-dd");
     const hhmm = format(date, "HH:mm");
@@ -276,7 +285,7 @@ export default function MedicoMiAgenda() {
     }
 
     const diaNombre = NOMBRE_POR_INDICE[getDay(date)];
-    const horario = diaNombre && HORARIO_BASE[diaNombre];
+    const horario = diaNombre && medico.horario?.[diaNombre];
     if (!horario) {
       return {
         style: {
@@ -299,7 +308,7 @@ export default function MedicoMiAgenda() {
 
   return (
     <div className="min-h-screen bg-[#FBFDFC] text-[#1A2624]">
-      <SaxStyles />
+      <DashboardStyles />
       <TopBar nombre={`${medico.nombre} ${medico.apellido}`} />
 
       <div className={`max-w-[1200px] mx-auto px-4 md:px-8 py-8 flex flex-col md:flex-row gap-8 ${navMobilePadding}`}>
@@ -541,27 +550,30 @@ export default function MedicoMiAgenda() {
           {tab === "disponibilidad" && (
             <div className="flex flex-col gap-9 max-w-2xl">
               <div>
-                <h1 className="sax-display text-2xl text-[#0F3D3E] mb-2">Horario base</h1>
+                <h1 className="sax-display text-2xl text-[#0F3D3E] mb-2">Mi horario</h1>
                 <p className="text-sm text-[#48605C] mb-4">
-                  Definido por el personal administrativo al registrar tu perfil.
+                  Definido por el personal administrativo.
                 </p>
                 <div className="border border-[#DCE8E5] rounded-2xl overflow-hidden shadow-sm">
-                  {DIAS.map((d, i) => (
-                    <div
-                      key={d}
-                      className={`flex items-center justify-between px-5 py-3.5 text-sm ${
-                        i % 2 === 0 ? "bg-white" : "bg-[#F3F8F7]"
-                      }`}
-                    >
-                      <span className="font-semibold text-[#0F3D3E] flex items-center gap-2">
-                        <span className="material-symbols-outlined text-lg text-[#9AAFAB]">calendar_today</span>
-                        {d}
-                      </span>
-                      <span className="sax-mono text-[#48605C]">
-                        {HORARIO_BASE[d].inicio} – {HORARIO_BASE[d].fin}
-                      </span>
-                    </div>
-                  ))}
+                  {DIAS_SEMANA.map((d, i) => {
+                    const franja = medico.horario?.[d];
+                    return (
+                      <div
+                        key={d}
+                        className={`flex items-center justify-between px-5 py-3.5 text-sm ${
+                          i % 2 === 0 ? "bg-white" : "bg-[#F3F8F7]"
+                        }`}
+                      >
+                        <span className="font-semibold text-[#0F3D3E] flex items-center gap-2">
+                          <span className="material-symbols-outlined text-lg text-[#9AAFAB]">calendar_today</span>
+                          {d}
+                        </span>
+                        <span className="sax-mono text-[#48605C]">
+                          {franja ? `${franja.inicio} – ${franja.fin}` : "Día libre"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -729,45 +741,6 @@ const ESTADO_COLOR = {
 /* ============================================================
    Componentes de presentación locales a esta pantalla
    ============================================================ */
-
-function SaxStyles() {
-  return (
-    <style>{`
-      .sax-display { font-weight: 700; letter-spacing: -0.02em; }
-      .sax-mono { font-family: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace; }
-
-      /* Estilos de marca aplicados sobre el CSS por defecto de react-big-calendar */
-      .saludagendax-calendar .rbc-today { background-color: #EDF7F4; }
-      .saludagendax-calendar .rbc-header {
-        padding: 8px 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: #48605C;
-        border-color: #DCE8E5;
-      }
-      .saludagendax-calendar .rbc-time-content,
-      .saludagendax-calendar .rbc-time-header-content,
-      .saludagendax-calendar .rbc-time-view,
-      .saludagendax-calendar .rbc-month-view,
-      .saludagendax-calendar .rbc-timeslot-group {
-        border-color: #DCE8E5;
-      }
-      .saludagendax-calendar .rbc-off-range-bg {
-        background-color: #F7FAF9;
-      }
-      .saludagendax-calendar .rbc-current-time-indicator {
-        background-color: #0E9668;
-      }
-      .saludagendax-calendar .rbc-event:focus {
-        outline: 2px solid #0E9668;
-      }
-      @media (max-width: 640px) {
-        .saludagendax-calendar .rbc-label { font-size: 0.65rem; }
-        .saludagendax-calendar .rbc-event { font-size: 0.65rem; padding: 1px 3px; }
-      }
-    `}</style>
-  );
-}
 
 function Leyenda({ color, label, estilo }) {
   return (

@@ -8,6 +8,10 @@
 // desincronizadas entre sí.
 // ─────────────────────────────────────────────────────────────────────────
 
+let excepciones = [];
+
+let excepcionesListeners = [];
+
 // `let`, no `const`: el dashboard administrativo puede agregar/eliminar
 // especialidades y sedes en caliente (flujo 2.2 / pantalla 15).
 export let ESPECIALIDADES = [
@@ -21,8 +25,10 @@ export let SEDES = ["Sede Norte", "Sede Sur", "Sede Centro", "Sede Chipichape"];
 
 export const EPS_DISPONIBLES = ["Nueva EPS", "Sura EPS", "Compensar", "Sanitas", "Coosalud"];
 
-// Horario base compartido por todos los médicos por ahora (flujo 2.1).
-// Cuando exista backend, cada médico tendrá el suyo propio.
+// Horario "de fábrica" que se usa como punto de partida al crear un médico
+// nuevo (flujo 2.1). A partir de ahí, cada médico tiene su propio horario
+// editable desde el dashboard administrativo (ver `horario` en cada usuario
+// médico y `actualizarUsuarioMock`).
 export const HORARIO_BASE = {
   Lunes: { inicio: "08:00", fin: "16:00" },
   Martes: { inicio: "08:00", fin: "16:00" },
@@ -30,6 +36,14 @@ export const HORARIO_BASE = {
   Jueves: { inicio: "08:00", fin: "16:00" },
   Viernes: { inicio: "08:00", fin: "14:00" },
 };
+
+export const DIAS_SEMANA = Object.keys(HORARIO_BASE);
+
+// Copia profunda del horario base — cada médico recibe su propia copia para
+// poder editarla sin afectar a los demás ni a HORARIO_BASE.
+function clonarHorarioBase() {
+  return Object.fromEntries(Object.entries(HORARIO_BASE).map(([dia, franja]) => [dia, { ...franja }]));
+}
 
 export const FRANJAS_MOCK = ["08:00", "08:30", "09:00", "10:00", "10:30", "11:00", "14:00", "14:30"];
 
@@ -88,8 +102,8 @@ export function eliminarSede(nombre) {
 }
 
 // ---------- Usuarios ----------
-// `let`, no `const`: mockRegister/agregarUsuarioMock/registrarMedico le
-// agregan cuentas nuevas mientras se prueba sin backend.
+// `let`, no `const`: mockRegister/agregarUsuarioMock/registrarMedico/
+// registrarPaciente le agregan cuentas nuevas mientras se prueba sin backend.
 export let MOCK_USERS = [
   {
     cedula: "1000000001",
@@ -130,6 +144,7 @@ export let MOCK_USERS = [
       sede: "Sede Norte",
       numeroRegistro: "RM-10021",
       titulo: "Especialista en Cardiología",
+      horario: clonarHorarioBase(),
       activo: true,
     },
   },
@@ -146,6 +161,7 @@ export let MOCK_USERS = [
       sede: "Sede Centro",
       numeroRegistro: "RM-10022",
       titulo: "Médica general, especialista en Pediatría",
+      horario: clonarHorarioBase(),
       activo: true,
     },
   },
@@ -162,6 +178,7 @@ export let MOCK_USERS = [
       sede: "Sede Sur",
       numeroRegistro: "RM-10023",
       titulo: "Especialista en Dermatología",
+      horario: clonarHorarioBase(),
       activo: true,
     },
   },
@@ -187,21 +204,47 @@ export let MOCK_USERS = [
   },
 ];
 
-export function agregarUsuarioMock(nuevo) {
-  MOCK_USERS = [...MOCK_USERS, nuevo];
+// ---------- Store reactivo de usuarios ----------
+// Igual que `citasStore` más abajo: permite que cualquier parte de la app
+// que tenga un usuario "en memoria" (por ejemplo, el `user` de AuthContext
+// para la sesión activa) se entere cuando otro rol (el administrador) edita
+// ese mismo usuario — sede, especialidades, horario, activo/inactivo, etc.
+// Sin esto, un médico con sesión abierta no ve cambios que el admin haga
+// sobre su perfil hasta que cierre sesión y vuelva a entrar.
+const userListeners = new Set();
+function emitUsuarios() {
+  userListeners.forEach((l) => l());
 }
 
-// Usado por "Mi perfil" en los dashboards al guardar cambios.
+export function subscribeUsuarios(listener) {
+  userListeners.add(listener);
+  return () => userListeners.delete(listener);
+}
+
+export function getUsuarioPorId(id) {
+  return MOCK_USERS.find((m) => m.user.id === id)?.user ?? null;
+}
+
+export function agregarUsuarioMock(nuevo) {
+  MOCK_USERS = [...MOCK_USERS, nuevo];
+  emitUsuarios();
+}
+
+// Usado por "Mi perfil" en los dashboards al guardar cambios, y por el
+// dashboard administrativo al editar especialidades/sede/horario de un
+// médico (flujo 2.1/2.2).
 export function actualizarUsuarioMock(id, cambios) {
   MOCK_USERS = MOCK_USERS.map((m) =>
     m.user.id === id ? { ...m, user: { ...m.user, ...cambios } } : m
   );
+  emitUsuarios();
   return MOCK_USERS.find((m) => m.user.id === id)?.user;
 }
 
 // Usado por resetPassword al completar la recuperación de contraseña.
 export function actualizarPasswordMock(id, nuevaPassword) {
   MOCK_USERS = MOCK_USERS.map((m) => (m.user.id === id ? { ...m, password: nuevaPassword } : m));
+  emitUsuarios();
 }
 
 // Activa/desactiva una cuenta (médico o paciente). Flujo de administración
@@ -210,13 +253,15 @@ export function toggleActivoUsuario(id) {
   MOCK_USERS = MOCK_USERS.map((m) =>
     m.user.id === id ? { ...m, user: { ...m.user, activo: m.user.activo === false ? true : false } } : m
   );
+  emitUsuarios();
   return MOCK_USERS.find((m) => m.user.id === id)?.user;
 }
 
 // ---------- Registro de médicos (flujo 2.1) ----------
 // El admin crea el usuario + datos profesionales + especialidades + sede en
-// un solo paso. El horario base es compartido por todos los médicos por
-// ahora (ver nota en HORARIO_BASE), así que no se configura por médico aquí.
+// un solo paso. Si no se pasa un horario explícito, el médico arranca con
+// una copia de HORARIO_BASE, editable después desde su tarjeta en el
+// dashboard administrativo.
 export function registrarMedico({
   cedula,
   password,
@@ -229,6 +274,7 @@ export function registrarMedico({
   sede,
   numeroRegistro,
   titulo,
+  horario,
 }) {
   const nuevoId = MOCK_USERS.reduce((max, m) => Math.max(max, m.user.id), 0) + 1;
   const nuevo = {
@@ -246,11 +292,136 @@ export function registrarMedico({
       sede,
       numeroRegistro,
       titulo,
+      horario: horario || clonarHorarioBase(),
       activo: true,
     },
   };
   MOCK_USERS = [...MOCK_USERS, nuevo];
+  emitUsuarios();
   return nuevo.user;
+}
+
+// Elimina definitivamente a un médico (distinto de desactivarlo con
+// toggleActivoUsuario). No se permite si tiene citas activas (agendada o
+// reprogramada): primero deben reprogramarse con otro médico. La misma
+// validación ya se hace en la UI antes de pedir confirmación; se repite
+// aquí como última barrera por si el estado cambió justo antes de
+// confirmar (p. ej. dos administradores trabajando a la vez).
+export function eliminarMedico(id) {
+  const registro = MOCK_USERS.find((m) => m.user.id === id && m.user.rol === "medico");
+  if (!registro) {
+    return { ok: false, mensaje: "Ese médico no existe o ya fue eliminado." };
+  }
+
+  const tieneCitasActivas = citas.some(
+    (c) => c.medicoId === id && (c.estado === "agendada" || c.estado === "reprogramada")
+  );
+  if (tieneCitasActivas) {
+    return {
+      ok: false,
+      mensaje: "No puedes eliminar este médico: tiene citas activas. Reprográmalas con otro médico antes de continuar.",
+    };
+  }
+
+  MOCK_USERS = MOCK_USERS.filter((m) => m.user.id !== id);
+  emitUsuarios();
+  return { ok: true };
+}
+
+// ---------- Registro/edición/eliminación de pacientes (flujo 5.2 / pantalla 17) ----------
+// Mismo mecanismo que registrarMedico/eliminarMedico: el admin puede dar de
+// alta, editar y eliminar pacientes directamente sobre MOCK_USERS.
+
+export function registrarPaciente({
+  cedula,
+  password,
+  nombre,
+  apellido,
+  correo,
+  telefono,
+  direccion,
+  eps,
+}) {
+  const cedulaLimpia = (cedula || "").trim();
+  const correoLimpio = (correo || "").trim();
+
+  const cedulaDuplicada = MOCK_USERS.some((m) => m.cedula === cedulaLimpia);
+  if (cedulaDuplicada) {
+    return { ok: false, mensaje: "Ya existe un usuario registrado con esa cédula." };
+  }
+  const correoDuplicado = MOCK_USERS.some(
+    (m) => m.user.correo?.toLowerCase() === correoLimpio.toLowerCase()
+  );
+  if (correoDuplicado) {
+    return { ok: false, mensaje: "Ya existe un usuario registrado con ese correo." };
+  }
+
+  const nuevoId = MOCK_USERS.reduce((max, m) => Math.max(max, m.user.id), 0) + 1;
+  const nuevo = {
+    cedula: cedulaLimpia,
+    password,
+    user: {
+      id: nuevoId,
+      rol: "paciente",
+      nombre,
+      apellido,
+      correo: correoLimpio,
+      telefono,
+      direccion,
+      eps,
+      activo: true,
+    },
+  };
+  MOCK_USERS = [...MOCK_USERS, nuevo];
+  emitUsuarios();
+  return { ok: true, paciente: nuevo.user };
+}
+
+// Edita los datos de contacto de un paciente (nombre, apellido, correo,
+// teléfono, dirección, EPS). La cédula no se edita aquí, igual que con los
+// médicos no se edita su número de registro desde este flujo.
+export function actualizarPaciente(id, cambios) {
+  const registro = MOCK_USERS.find((m) => m.user.id === id && m.user.rol === "paciente");
+  if (!registro) {
+    return { ok: false, mensaje: "Ese paciente no existe o ya fue eliminado." };
+  }
+
+  if (cambios.correo) {
+    const correoDuplicado = MOCK_USERS.some(
+      (m) => m.user.id !== id && m.user.correo?.toLowerCase() === cambios.correo.trim().toLowerCase()
+    );
+    if (correoDuplicado) {
+      return { ok: false, mensaje: "Ya existe otro usuario registrado con ese correo." };
+    }
+  }
+
+  actualizarUsuarioMock(id, cambios); // ya emite el evento internamente
+  return { ok: true };
+}
+
+// Elimina definitivamente a un paciente. No se permite si tiene citas
+// activas (agendada o reprogramada): primero deben cancelarse o
+// reprogramarse. Igual que en eliminarMedico, esta validación ya se hizo en
+// la UI antes de confirmar; se repite aquí como última barrera.
+export function eliminarPaciente(id) {
+  const registro = MOCK_USERS.find((m) => m.user.id === id && m.user.rol === "paciente");
+  if (!registro) {
+    return { ok: false, mensaje: "Ese paciente no existe o ya fue eliminado." };
+  }
+
+  const tieneCitasActivas = citas.some(
+    (c) => c.pacienteId === id && (c.estado === "agendada" || c.estado === "reprogramada")
+  );
+  if (tieneCitasActivas) {
+    return {
+      ok: false,
+      mensaje: "No puedes eliminar este paciente: tiene citas activas. Cancélalas o reprográmalas antes de continuar.",
+    };
+  }
+
+  MOCK_USERS = MOCK_USERS.filter((m) => m.user.id !== id);
+  emitUsuarios();
+  return { ok: true };
 }
 
 // ---------- Recuperación de contraseña ----------
@@ -347,6 +518,31 @@ function revisarCitasVencidas() {
 // snapshot en ese momento (p. ej. si el usuario deja la pestaña quieta).
 revisarCitasVencidas();
 setInterval(revisarCitasVencidas, 30000);
+
+function emitirExcepciones() {
+  excepcionesListeners.forEach((listener) => listener());
+}
+
+export const excepcionesStore = {
+  getSnapshot() {
+    return excepciones;
+  },
+  subscribe(listener) {
+    excepcionesListeners.push(listener);
+    return () => {
+      excepcionesListeners = excepcionesListeners.filter((l) => l !== listener);
+    };
+  },
+  // `excepcion` debe incluir medicoId además de fecha/tipo/todoDia/horaInicio/horaFin/motivo
+  agregar(excepcion) {
+    excepciones = [...excepciones, { id: Date.now(), ...excepcion }];
+    emitirExcepciones();
+  },
+  eliminar(id) {
+    excepciones = excepciones.filter((e) => e.id !== id);
+    emitirExcepciones();
+  },
+};
 
 export const citasStore = {
   subscribe(listener) {
