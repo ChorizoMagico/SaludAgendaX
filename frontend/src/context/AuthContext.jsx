@@ -7,6 +7,8 @@ import {
   crearTokenReset,
   validarTokenReset,
   consumirTokenReset,
+  subscribeUsuarios,
+  getUsuarioPorId,
 } from "./mockData";
 // import axiosClient from "../api/axiosClient"; // descomenta cuando apagues el mock
 
@@ -126,6 +128,28 @@ export function AuthProvider({ children }) {
     }
     setLoading(false);
   }, []);
+
+  // Mantiene sincronizado al usuario de la sesión activa con MOCK_USERS.
+  // Sin esto, si un administrador edita a este mismo usuario (por ejemplo,
+  // el horario, la sede o las especialidades de un médico) mientras ese
+  // médico ya tiene sesión abierta, el objeto `user` en memoria (y el de
+  // localStorage) se queda desactualizado hasta que cierre sesión y vuelva
+  // a entrar. `subscribeUsuarios` avisa cada vez que MOCK_USERS cambia, y
+  // aquí releemos únicamente al usuario logueado.
+  useEffect(() => {
+    if (!USE_MOCK || !user) return;
+    return subscribeUsuarios(() => {
+      const actualizado = getUsuarioPorId(user.id);
+      if (!actualizado) return; // el usuario fue eliminado por un admin
+      setUser((prev) => {
+        // Evita un re-render/loop innecesario si nada cambió realmente.
+        if (prev && JSON.stringify(prev) === JSON.stringify(actualizado)) return prev;
+        localStorage.setItem("user", JSON.stringify(actualizado));
+        return actualizado;
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   async function login(cedula, password) {
     const { data } = USE_MOCK
