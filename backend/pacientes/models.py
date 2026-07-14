@@ -85,3 +85,22 @@ class Cita(models.Model):
 
     def __str__(self):
         return f"Cita {self.id} - {self.paciente} - {self.fecha_hora}"
+    
+class TopeEPS(models.Model):
+    """Modelo para configurar límites de citas por EPS"""
+    TIPO_PERIODO = [
+        ('SEMANAL', 'Semanal'),
+        ('MENSUAL', 'Mensual'),
+    ]
+
+    eps = models.OneToOneField(EPS, on_delete=models.CASCADE, related_name='tope')
+    limite_citas = models.PositiveIntegerField(help_text="Número máximo de citas permitidas")
+    tipo_periodo = models.CharField(max_length=10, choices=TIPO_PERIODO, default='MENSUAL')
+    presupuesto_maximo = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        db_table = 'tope_eps'
+        verbose_name_plural = 'Topes EPS'
+
+    def __str__(self):
+        return f"Tope para {self.eps.nombre}: {self.limite_citas} citas ({self.tipo_periodo})"
