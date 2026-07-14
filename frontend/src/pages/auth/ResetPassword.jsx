@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import medicosImg from "../../img/medicos4.jpg";
+import medicosImg from "../../img/medicos5.jpg";
 
 export default function ResetPassword() {
   const { resetPassword } = useAuth();
@@ -25,8 +25,8 @@ export default function ResetPassword() {
       setError("El enlace no es válido. Solicita uno nuevo.");
       return;
     }
-    if (password.length < 6) {
-      setError("La contraseña debe tener al menos 6 caracteres.");
+    if (password.length < 8) {
+      setError("La contraseña debe tener al menos 8 caracteres.");
       return;
     }
     if (password !== confirmar) {
@@ -165,7 +165,7 @@ export default function ResetPassword() {
                       </span>
                     </button>
                   </div>
-                  <p className="text-xs text-[#9AAFAB] mt-1.5">Mínimo 6 caracteres.</p>
+                  <p className="text-xs text-[#9AAFAB] mt-1.5">Mínimo 8 caracteres.</p>
                 </div>
 
                 <div>

@@ -11,7 +11,7 @@ import addHours from "date-fns/addHours";
 import es from "date-fns/locale/es";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 
-import { HORARIO_BASE, getPacientePorId, citasStore } from "../../context/mockData";
+import { HORARIO_BASE, getPacientePorId, citasStore, DURACION_CITA_MIN } from "../../context/mockData";
 import { TopBar, DashboardNav, navMobilePadding, Campo, CampoSolo } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
 
@@ -52,6 +52,26 @@ function combinarFechaYHora(fecha, horaStr) {
 
 function hoyISO() {
   return format(new Date(), "yyyy-MM-dd");
+}
+
+// Convierte "HH:mm" a minutos desde medianoche, para comparar rangos fácilmente
+function horaAMinutos(horaStr) {
+  const [h, m] = horaStr.split(":").map(Number);
+  return h * 60 + m;
+}
+
+// ¿El rango [inicioMin, finMin) se solapa con alguna cita ACTIVA
+// (agendada/reprogramada) de este médico en esa fecha? Cada cita ocupa
+// DURACION_CITA_MIN minutos desde su hora de inicio. Las citas canceladas
+// o completadas no cuentan: ya no ocupan el horario.
+function rangoChocaConCitaActiva(citasDelMedico, fechaStr, inicioMin, finMin) {
+  return citasDelMedico.some((c) => {
+    if (c.fecha !== fechaStr) return false;
+    if (c.estado !== "agendada" && c.estado !== "reprogramada") return false;
+    const citaInicio = horaAMinutos(c.hora);
+    const citaFin = citaInicio + DURACION_CITA_MIN;
+    return inicioMin < citaFin && citaInicio < finMin;
+  });
 }
 
 export default function MedicoMiAgenda() {
@@ -139,9 +159,9 @@ export default function MedicoMiAgenda() {
     setFechaCalendario(startOfMonth(opt.fecha));
   }
 
-  function marcarComoCompletada(id) {
-    citasStore.actualizar(id, { estado: "completada" });
-    setCitaActiva((prev) => (prev ? { ...prev, estado: "completada" } : prev));
+  function eliminarCita(id) {
+    citasStore.eliminar(id);
+    setCitaActiva(null);
   }
 
   function agregarExcepcion(e) {
@@ -165,6 +185,21 @@ export default function MedicoMiAgenda() {
     const finExcepcion = combinarFechaYHora(new Date(`${nuevaExcepcion.fecha}T00:00:00`), horaReferencia);
     if (finExcepcion < new Date()) {
       setErrorExcepcion("Ese horario ya pasó. Elige una fecha u hora futura.");
+      return;
+    }
+
+    // No se puede bloquear un rango (o el día completo) si ya hay una cita
+    // activa de un paciente dentro de ese rango: primero hay que reprogramarla
+    // o cancelarla, o bien bloquear solo las horas libres.
+    const inicioMin = nuevaExcepcion.todoDia ? 0 : horaAMinutos(nuevaExcepcion.horaInicio);
+    const finMin = nuevaExcepcion.todoDia ? 24 * 60 : horaAMinutos(nuevaExcepcion.horaFin);
+
+    if (rangoChocaConCitaActiva(citas, nuevaExcepcion.fecha, inicioMin, finMin)) {
+      setErrorExcepcion(
+        nuevaExcepcion.todoDia
+          ? "No puedes bloquear el día completo: tienes citas agendadas ese día. Bloquea solo las franjas sin citas, o reprograma/cancela esas citas primero."
+          : "Ese rango de horas choca con una cita ya agendada. Elige otro horario o reprograma esa cita primero."
+      );
       return;
     }
 
@@ -448,14 +483,19 @@ export default function MedicoMiAgenda() {
                     <DetalleFila icon="info" etiqueta="Estado" valor={citaActiva.estado} capitalizar />
                   </dl>
 
-                  {citaActiva.estado !== "completada" && (
+                  {citaActiva.estado === "cancelada" && (
                     <div className="px-6 pb-6">
                       <button
-                        onClick={() => marcarComoCompletada(citaActiva.id)}
-                        className="w-full bg-[#0E9668] text-white px-4 py-2.5 rounded-full text-sm font-semibold hover:bg-[#0C7D57] transition-colors duration-200"
+                        onClick={() => eliminarCita(citaActiva.id)}
+                        className="w-full bg-[#BA1A1A] text-white px-4 py-2.5 rounded-full text-sm font-semibold hover:opacity-90 transition-colors duration-200 flex items-center justify-center gap-2"
                       >
-                        Marcar como completada
+                        <span className="material-symbols-outlined text-lg">delete</span>
+                        Eliminar cita cancelada
                       </button>
+                      <p className="text-xs text-[#48605C] mt-2 text-center">
+                        Si no la eliminas, otro paciente
+                        puede agendar en este horario y la cita cancelada se borrará automáticamente.
+                      </p>
                     </div>
                   )}
                 </aside>
@@ -529,7 +569,7 @@ export default function MedicoMiAgenda() {
                 <h2 className="sax-display text-xl text-[#0F3D3E] mb-2">Excepciones</h2>
                 <p className="text-sm text-[#48605C] mb-4">
                   Bloquea fechas puntuales por vacaciones, feriados o imprevistos. Puedes bloquear el día completo
-                  o solo un rango de horas.
+                  o solo un rango de horas. No se puede bloquear un horario donde ya tengas una cita agendada.
                 </p>
 
                 <form

@@ -8,9 +8,10 @@ import ForgotPassword from "./pages/auth/ForgotPassword";
 import ResetPassword from "./pages/auth/ResetPassword";
 import PacienteDashboard from "./pages/paciente/PacienteDashboard";
 import MiAgenda from "./pages/medico/MedicoAgenda";
+import AdminDashboard from "./pages/admin/AdminDashboard";
 
 // Descomentar a medida que se vayan creando las páginas restantes
-// import AdminDashboard from "./pages/admin/Dashboard";
+
 // import GestionMedicos from "./pages/admin/GestionMedicos";
 // import CalendarioGeneral from "./pages/admin/CalendarioGeneral";
 // import Reportes from "./pages/admin/Reportes";
@@ -39,7 +40,7 @@ function App() {
 
           {/* Administrativo + Superadministrador */}
           <Route element={<ProtectedRoute rolesPermitidos={["administrativo", "superadministrador"]} />}>
-            {/* <Route path="/admin/dashboard" element={<AdminDashboard />} /> */}
+            <Route path="/admin/dashboard" element={<AdminDashboard />} />
             {/* <Route path="/admin/medicos" element={<GestionMedicos />} /> */}
             {/* <Route path="/admin/calendario" element={<CalendarioGeneral />} /> */}
             {/* <Route path="/admin/reportes" element={<Reportes />} /> */}

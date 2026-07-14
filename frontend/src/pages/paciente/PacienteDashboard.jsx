@@ -82,10 +82,31 @@ export default function PacienteDashboard() {
   const medicosFiltrados = getMedicos().filter(
     (m) => m.especialidades.includes(wizardEspecialidad) && m.sede === wizardSede
   );
+
+  const sedesConMedico = SEDES.filter((sede) =>
+    getMedicos().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede)
+  );
+
   const medicoElegido = wizardMedicoId ? getMedicoPorId(wizardMedicoId) : null;
 
-  // Oculta franjas que ya pasaron cuando la fecha elegida es hoy
-  const franjasDisponibles = FRANJAS_MOCK.filter((f) => !franjaEsPasada(wizardFecha, f));
+  // Franjas que ese médico ya tiene ocupadas (activas) en la fecha elegida.
+  // Si estás reprogramando, tu propia cita actual no cuenta como "ocupada".
+  const franjasOcupadas = new Set(
+    todasLasCitas
+      .filter(
+        (c) =>
+          c.medicoId === wizardMedicoId &&
+          c.fecha === wizardFecha &&
+          (c.estado === "agendada" || c.estado === "reprogramada") &&
+          c.id !== citaReprogramando
+      )
+      .map((c) => c.hora)
+  );
+
+  // Oculta franjas que ya pasaron (si la fecha es hoy) o que ya están ocupadas
+  const franjasDisponibles = FRANJAS_MOCK.filter(
+    (f) => !franjaEsPasada(wizardFecha, f) && !franjasOcupadas.has(f)
+  );
 
   function resetWizard() {
     setWizardPaso(1);
@@ -100,8 +121,16 @@ export default function PacienteDashboard() {
   }
 
   function irATab(id) {
+    if (id === "agendar" && tab !== "agendar") {
+      resetWizard();
+    }
+    // Si sales de "Mis citas" sin confirmar la
+    // cancelación, se descarta y el tiquete vuelve a verse normal al volver.
+    if (tab === "citas" && id !== "citas") {
+      setCitaCancelando(null);
+      setMotivoCancelacion("");
+    }
     setTab(id);
-    if (id === "agendar" && !citaReprogramando) resetWizard();
   }
 
   function iniciarReprogramacion(cita) {
@@ -127,7 +156,7 @@ export default function PacienteDashboard() {
   // TODO backend: aquí se validarán las reglas de negocio reales (tope EPS,
   // restricción de frecuencia, franja aún disponible — flujo 3.1 paso 8).
   // Por ahora, siempre se asume válido.
-  function validarReglasNegocio() {
+    function validarReglasNegocio() {
     return { ok: true };
   }
 
@@ -137,10 +166,39 @@ export default function PacienteDashboard() {
       return;
     }
 
+    // Verifica que nadie haya tomado esa franja mientras completabas el wizard.
+    const horarioYaOcupado = todasLasCitas.some(
+      (c) =>
+        c.medicoId === wizardMedicoId &&
+        c.fecha === wizardFecha &&
+        c.hora === wizardFranja &&
+        (c.estado === "agendada" || c.estado === "reprogramada") &&
+        c.id !== citaReprogramando
+    );
+    if (horarioYaOcupado) {
+      setWizardMensaje("Ese horario ya fue tomado por otro paciente. Elige otro horario.");
+      setWizardPaso(4);
+      return;
+    }
+
     const { ok, mensaje } = validarReglasNegocio();
     if (!ok) {
       setWizardMensaje(mensaje);
       return;
+    }
+
+    // Si ese médico/fecha/hora tenía una cita cancelada de otro paciente
+    // (o de este mismo paciente) ocupando el cupo, se libera al tomarla.
+    const citaCanceladaEnEseEspacio = todasLasCitas.find(
+      (c) =>
+        c.medicoId === wizardMedicoId &&
+        c.fecha === wizardFecha &&
+        c.hora === wizardFranja &&
+        c.estado === "cancelada" &&
+        c.id !== citaReprogramando
+    );
+    if (citaCanceladaEnEseEspacio) {
+      citasStore.eliminar(citaCanceladaEnEseEspacio.id);
     }
 
     if (citaReprogramando) {
@@ -328,8 +386,13 @@ export default function PacienteDashboard() {
               {wizardPaso === 2 && (
                 <div className="flex flex-col gap-4 mt-6">
                   <label className="text-sm font-semibold text-[#0F3D3E]">Elige una sede</label>
+                  {sedesConMedico.length === 0 && (
+                    <p className="text-sm text-[#48605C] bg-[#F3F8F7] rounded-lg px-4 py-3">
+                      No hay médicos de {wizardEspecialidad} en ninguna sede todavía.
+                    </p>
+                  )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {SEDES.map((sede) => (
+                    {sedesConMedico.map((sede) => (
                       <OpcionPill
                         key={sede}
                         seleccionado={wizardSede === sede}
@@ -470,6 +533,7 @@ export default function PacienteDashboard() {
                       <FilaConfirmacion icon="location_on" etiqueta="Sede" valor={wizardSede} />
                       <FilaConfirmacion icon="event" etiqueta="Fecha" valor={wizardFecha} mono />
                       <FilaConfirmacion icon="schedule" etiqueta="Hora" valor={wizardFranja} mono />
+                      <FilaConfirmacion icon="hourglass_top" etiqueta="Duración" valor="30 minutos" mono />
                       {wizardMotivo && <FilaConfirmacion icon="edit_note" etiqueta="Motivo" valor={wizardMotivo} />}
                     </div>
                   </div>
