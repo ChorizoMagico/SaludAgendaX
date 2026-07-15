@@ -45,6 +45,12 @@ class Especialidad(models.Model):
     capacidad_diaria = models.PositiveIntegerField(default=50)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    capacidad_diaria = models.PositiveIntegerField(default=50)
+     
+    dias_entre_citas = models.PositiveIntegerField(
+        default=7,
+        help_text="Cantidad mínima de días entre citas de la misma especialidad para un paciente."
+    )
 
     class Meta:
         db_table = 'especialidad'
@@ -161,7 +167,7 @@ class HorarioMedico(models.Model):
 class ExcepcionMedico(models.Model):
     """Bloqueos de agenda del médico por permisos, vacaciones u otras novedades."""
 
-    medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='excepciones')
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='excepciones_medicas')
     fecha = models.DateField()
     hora_inicio = models.TimeField(null=True, blank=True)
     hora_fin = models.TimeField(null=True, blank=True)
@@ -193,3 +199,14 @@ class NotificacionPendiente(models.Model):
 
     class Meta:
         db_table = 'notificacion_pendiente'
+
+
+class ExcepcionHorario(models.Model):
+    TIPO_EXCEPCION = [('BLOQUEO', 'Bloqueo'), ('EXTRA', 'Horario Extra')]
+    
+    medico = models.ForeignKey('Medico', on_delete=models.CASCADE, related_name='excepciones_horario')
+    fecha = models.DateField()
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+    tipo = models.CharField(max_length=10, choices=TIPO_EXCEPCION)
+    motivo = models.TextField(blank=True, null=True)

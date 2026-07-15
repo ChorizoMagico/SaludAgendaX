@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
 from rest_framework.views import APIView
 from django.db.models import Count, Q
+from .disponibilidad import esta_disponible
+
 
 from .serializers import (
     PacienteRegistroSerializer, 
@@ -406,33 +408,35 @@ class CitaViewSet(ModelViewSet):
         if not serializer.is_valid():
             return self._error_response(serializer.errors)
 
-        try:
-            self.perform_create(serializer)
-        except serializers.ValidationError as exc:
-            return self._error_response(exc.detail)
 
-        cita = serializer.instance
-        response_serializer = self.get_serializer(cita)
-        agenda_ocupada = Cita.objects.filter(
-            medico=cita.medico,
-            fecha=cita.fecha,
+        medico = serializer.validated_data['medico']
+        fecha = serializer.validated_data['fecha']
+        hora_inicio = serializer.validated_data['hora_inicio']
+        hora_fin = serializer.validated_data['hora_fin']
+
+
+        if not esta_disponible(medico, fecha, hora_inicio, hora_fin):
+            return self._error_response(
+                {'non_field_errors': ['El médico no tiene disponibilidad en este horario o está bloqueado.']},
+                message='Conflicto de horario'
+            )
+
+
+        horario = HorarioMedico.objects.filter(medico=medico, dia_semana=fecha.weekday()).first()
+        limite = horario.max_citas_por_hora if horario else 4 # Valor por defecto
+        
+        citas_existentes = Cita.objects.filter(
+            medico=medico, fecha=fecha, hora_inicio=hora_inicio
         ).exclude(estado='CANCELADA').count()
 
-        return Response(
-            {
-                'status': 'success',
-                'code': 201,
-                'message': 'Cita creada exitosamente',
-                'data': response_serializer.data,
-                'agenda': {
-                    'medico': cita.medico_id,
-                    'fecha': cita.fecha,
-                    'citas_ocupadas': agenda_ocupada,
-                },
-                'alerts': serializer.context.get('alerts', []),
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        if citas_existentes >= limite:
+            return self._error_response(
+                {'non_field_errors': ['Se ha alcanzado el límite de citas para esta hora.']},
+                message='Capacidad máxima alcanzada'
+            )
+
+
+        return super().create(request, *args, **kwargs)
 
 class DashboardMetricsView(APIView):
     # Solo administrativos/superadmin accede

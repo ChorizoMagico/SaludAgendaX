@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, time
-from .models import HorarioMedico, Cita, ExcepcionHorario
+from .models import HorarioMedico, Cita, ExcepcionMedico
 
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
@@ -22,12 +22,12 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
         dia_semana = fecha_actual.weekday()
         
         # Verificar si hay excepción (día libre, cerrado, etc)
-        excepcion = ExcepcionHorario.objects.filter(
+        excepcion = ExcepcionMedico.objects.filter(
             medico=medico,
             fecha=fecha_actual
         ).first()
         
-        if excepcion and not excepcion.disponible:
+        if excepcion and excepcion.tipo == 'BLOQUEO':
             fecha_actual += timedelta(days=1)
             continue
         
@@ -66,3 +66,20 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
         fecha_actual += timedelta(days=1)
     
     return slots
+
+def esta_disponible(medico, fecha, hora_inicio, hora_fin):
+    # 1. Verificar excepciones (Prioridad máxima)
+    excepcion = ExcepcionHorario.objects.filter(
+        medico=medico, fecha=fecha, 
+        hora_inicio__lte=hora_inicio, hora_fin__gte=hora_fin
+    ).first()
+    
+    if excepcion:
+        return excepcion.tipo == 'EXTRA'
+    
+    # 2. Verificar horario base
+    return HorarioMedico.objects.filter(
+        medico=medico, dia_semana=fecha.weekday(),
+        hora_inicio__lte=hora_inicio, hora_fin__gte=hora_fin,
+        activo=True
+    ).exists()
