@@ -12,7 +12,7 @@ import es from "date-fns/locale/es";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 
 import { DIAS_SEMANA, getPacientePorId, citasStore, excepcionesStore, DURACION_CITA_MIN } from "../../context/mockData";
-import { TopBar, DashboardNav, navMobilePadding, Campo, CampoSolo, DashboardStyles } from "../../context/ui";
+import { TopBar, DashboardNav, DashboardBackground, navMobilePadding, Campo, CampoSolo, DashboardStyles } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
 
 const TABS = [
@@ -308,6 +308,7 @@ export default function MedicoMiAgenda() {
 
   return (
     <div className="min-h-screen bg-[#FBFDFC] text-[#1A2624]">
+      <DashboardBackground />
       <DashboardStyles />
       <TopBar nombre={`${medico.nombre} ${medico.apellido}`} />
 

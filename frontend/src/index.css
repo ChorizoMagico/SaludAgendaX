@@ -3,3 +3,104 @@
 html {
   scroll-behavior: smooth;
 }
+
+.bg-\[\#FBFDFC\] {
+  background: linear-gradient(
+    135deg,
+    #C9F0E0 0%,
+    #E8F6F0 20%,
+    #FFFFFF 45%,
+    #DFF3EC 70%,
+    #C4EEDC 100%
+  );
+  background-size: 300% 300%;
+  animation: sax-gradient-shift 14s ease-in-out infinite;
+  position: relative;
+}
+
+@keyframes sax-gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Wrapper que agrupa las 4 manchas: ocupa todo el contenedor padre,
+   no captura clics, y queda por debajo de absolutamente todo gracias
+   al z-index negativo. */
+.sax-dashboard-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: -10;
+  pointer-events: none;
+}
+
+.sax-blob-1 {
+  position: absolute;
+  top: -110px;
+  left: -110px;
+  width: 460px;
+  height: 460px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(14, 150, 104, 0.45), transparent 70%);
+  filter: blur(55px);
+  animation: sax-float-a 22s ease-in-out infinite;
+}
+
+.sax-blob-2 {
+  position: absolute;
+  top: -130px;
+  right: -120px;
+  width: 500px;
+  height: 500px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.75), transparent 70%);
+  filter: blur(60px);
+  animation: sax-float-b 26s ease-in-out infinite;
+}
+
+.sax-blob-3 {
+  position: absolute;
+  bottom: -150px;
+  right: -110px;
+  width: 480px;
+  height: 480px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(14, 150, 104, 0.38), transparent 70%);
+  filter: blur(60px);
+  animation: sax-float-a 24s ease-in-out infinite reverse;
+}
+
+.sax-blob-4 {
+  position: absolute;
+  bottom: -130px;
+  left: -130px;
+  width: 460px;
+  height: 460px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.7), transparent 70%);
+  filter: blur(55px);
+  animation: sax-float-b 20s ease-in-out infinite reverse;
+}
+
+@keyframes sax-float-a {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(45px, 35px) scale(1.15); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+
+@keyframes sax-float-b {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(-40px, -30px) scale(1.1); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-\[\#FBFDFC\],
+  .sax-blob-1,
+  .sax-blob-2,
+  .sax-blob-3,
+  .sax-blob-4 {
+    animation: none !important;
+  }
+}
