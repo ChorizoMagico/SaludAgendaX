@@ -150,7 +150,11 @@ class CitaService:
                 add_error('especialidad', 'La especialidad ya alcanzó su capacidad diaria.')
 
         
+
+        
         if paciente and especialidad and fecha:
+            fecha_minima = fecha - timedelta(days=especialidad.dias_entre_citas)
+            fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
             fecha_minima = fecha - timedelta(days=especialidad.dias_entre_citas)
             fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
 
@@ -159,17 +163,23 @@ class CitaService:
                 especialidad=especialidad,
                 fecha__gt=fecha_minima,
                 fecha__lt=fecha_maxima,
+                fecha__gt=fecha_minima,
+                fecha__lt=fecha_maxima,
             ).exclude(estado='CANCELADA')
+
 
             if lock:
                 citas_paciente_especialidad = citas_paciente_especialidad.select_for_update()
 
             if citas_paciente_especialidad.exists():
+
+            if citas_paciente_especialidad.exists():
                 add_error(
-                    'paciente',
+                    'frecuencia',
                     f'Solo puede agendar una cita de {especialidad.nombre} cada '
                     f'{especialidad.dias_entre_citas} días.'
                 )
+
 
 
         if eps and fecha:
