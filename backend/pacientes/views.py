@@ -156,7 +156,7 @@ def perfil_paciente(request):
     from .models import Paciente
     
     try:
-        paciente = Paciente.objects.get(usuario=request.user)
+        paciente = Paciente.objects.select_related('usuario', 'eps').get(usuario=request.user) #optimizado
     except Paciente.DoesNotExist:
         return Response({
             'error': 'El usuario no tiene perfil de paciente'
@@ -310,7 +310,12 @@ def historial_citas_paciente(request):
         }, status=status.HTTP_403_FORBIDDEN)
     
     # Obtener citas del paciente
-    citas = Cita.objects.filter(paciente=paciente).order_by('-fecha_hora')
+    citas = Cita.objects.filter(paciente=paciente).select_related(
+        'medico',
+        'medico__usuario',
+        'especialidad',
+        'eps'
+    ).order_by('-fecha_hora') # optimizado
     
     # Filtrar por estado si se proporciona
     estado_filter = request.query_params.get('estado')

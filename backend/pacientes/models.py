@@ -103,6 +103,7 @@ class Cita(models.Model):
             models.Index(fields=['medico', 'fecha', 'hora_inicio'], name='cita_med_fecha_inicio_idx'),
             models.Index(fields=['especialidad', 'fecha'], name='cita_esp_fecha_idx'),
             models.Index(fields=['eps', 'estado'], name='cita_eps_estado_idx'),
+            models.Index(fields=['paciente', '-fecha_hora'], name='cita_paciente_fecha_idx'), # índice compuesto para optimización
         ]
 
     def __str__(self):
@@ -193,6 +194,13 @@ class NotificacionPendiente(models.Model):
 
     class Meta:
         db_table = 'notificacion_pendiente'
+        indexes = [
+            models.Index(
+                fields=['estado'], 
+                name='notif_pendiente_idx',
+                condition=models.Q(estado='pendiente') # Índice parcial para optimización
+            )
+        ]
 
 
 class ExcepcionHorario(models.Model):
