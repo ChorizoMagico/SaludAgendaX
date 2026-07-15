@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, time
-from .models import HorarioMedico, Cita, ExcepcionHorario
+from .models import HorarioMedico, Cita, ExcepcionMedico
 
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
@@ -22,7 +22,7 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
         dia_semana = fecha_actual.weekday()
         
         # Verificar si hay excepción (día libre, cerrado, etc)
-        excepcion = ExcepcionHorario.objects.filter(
+        excepcion = ExcepcionMedico.objects.filter(
             medico=medico,
             fecha=fecha_actual
         ).first()
