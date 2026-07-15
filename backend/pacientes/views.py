@@ -24,12 +24,11 @@ from .serializers import (
     CitaCancelacionSerializer,
     CitaListSerializer,
     HorarioMedicoSerializer,
-    AgendaMedicoSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico
+from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico
 from .services import CitaService
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
@@ -587,12 +586,6 @@ class HorarioMedicoViewSet(ModelViewSet):
         "head",
         "options",
     ]
-
-
-class CitaPagination(PageNumberPagination):
-    page_size = 10
-    page_size_query_param = "page_size"
-    max_page_size = 100
 
 
 class CitaViewSet(ModelViewSet):
