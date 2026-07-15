@@ -4,7 +4,14 @@ from .models import Cita, Paciente, EPS, Especialidad, Medico
 from .services import CitaService
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.models import User
-from .models import Paciente, EPS, Cita
+from .models import (
+    Cita,
+    Paciente,
+    EPS,
+    Especialidad,
+    Medico,
+    HorarioMedico,
+)
 
 
 class PacienteRegistroSerializer(serializers.ModelSerializer):
@@ -163,6 +170,7 @@ class CitaListSerializer(serializers.ModelSerializer):
         fields = ['id', 'medico_nombre', 'especialidad_nombre', 'fecha_hora', 
                   'estado', 'motivo', 'creado_en', 'actualizado_en']
         read_only_fields = fields
+
 class EspecialidadSerializer(serializers.ModelSerializer):
     medico_ids = serializers.PrimaryKeyRelatedField(
         source='medicos',
@@ -225,6 +233,53 @@ class EspecialidadSerializer(serializers.ModelSerializer):
         if medicos is not None:
             especialidad.medicos.set(medicos)
         return especialidad
+    
+
+class HorarioMedicoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HorarioMedico
+        fields = [
+            "id",
+            "medico",
+            "dia_semana",
+            "hora_inicio",
+            "hora_fin",
+            "max_citas_por_hora",
+            "activo",
+        ]
+        read_only_fields = ["id"]
+
+    def validate(self, attrs):
+        medico = attrs.get("medico", getattr(self.instance, "medico", None))
+        dia_semana = attrs.get("dia_semana", getattr(self.instance, "dia_semana", None))
+        hora_inicio = attrs.get("hora_inicio", getattr(self.instance, "hora_inicio", None))
+        hora_fin = attrs.get("hora_fin", getattr(self.instance, "hora_fin", None))
+
+        # Validar que la hora inicial sea menor que la final
+        if hora_inicio >= hora_fin:
+            raise serializers.ValidationError({
+                "hora_inicio": "La hora de inicio debe ser menor que la hora de fin."
+            })
+
+        # Buscar horarios que se crucen
+        conflictos = HorarioMedico.objects.filter(
+            medico=medico,
+            dia_semana=dia_semana,
+            activo=True,
+            hora_inicio__lt=hora_fin,
+            hora_fin__gt=hora_inicio,
+        )
+
+        # Si estamos editando, excluir el propio registro
+        if self.instance:
+            conflictos = conflictos.exclude(pk=self.instance.pk)
+
+        if conflictos.exists():
+            raise serializers.ValidationError({
+                "horario": "Ya existe un horario que se solapa con este intervalo."
+            })
+
+        return attrs
 
 
 class CitaSerializer(serializers.ModelSerializer):
