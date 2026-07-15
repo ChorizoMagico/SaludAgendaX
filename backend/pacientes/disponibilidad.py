@@ -3,7 +3,7 @@ from .models import HorarioMedico, Cita, ExcepcionMedico
 
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
-    Calcula los slots disponibles para un médico en un rango de fechas
+    Calcula los slots disponibles para un médico en un rango de fechas. Optimizado.
     
     Args:
         medico: instancia de Medico
@@ -16,55 +16,57 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
     """
     slots = []
     fecha_actual = fecha_inicio.date()
+    fecha_limite = fecha_fin.date()
     
-    while fecha_actual <= fecha_fin.date():
-        # Obtener día de semana (0=Lunes, 6=Domingo)
-        dia_semana = fecha_actual.weekday()
+    
+    horarios_db = HorarioMedico.objects.filter(medico=medico, activo=True)
+    
+    horarios_por_dia = {i: [] for i in range(7)}
+    for h in horarios_db:
+        horarios_por_dia[h.dia_semana].append(h)
         
-        # Verificar si hay excepción (día libre, cerrado, etc)
-        excepcion = ExcepcionMedico.objects.filter(
-            medico=medico,
-            fecha=fecha_actual
-        ).first()
-        
-        if excepcion and excepcion.tipo == 'BLOQUEO':
+    
+    excepciones_db = ExcepcionHorario.objects.filter(
+        medico=medico,
+        fecha__range=[fecha_actual, fecha_limite],
+        tipo='BLOQUEO'
+    )
+    
+    dias_bloqueados = {ex.fecha for ex in excepciones_db} 
+    
+    
+    citas_db = Cita.objects.filter(
+        medico=medico,
+        fecha__range=[fecha_actual, fecha_limite],
+        estado__in=['PENDIENTE', 'CONFIRMADA']
+    )
+    
+    citas_ocupadas = {cita.fecha_hora for cita in citas_db} 
+    
+    
+    while fecha_actual <= fecha_limite:
+        if fecha_actual in dias_bloqueados:
             fecha_actual += timedelta(days=1)
             continue
-        
-        # Obtener horarios del médico para este día
-        horarios = HorarioMedico.objects.filter(
-            medico=medico,
-            dia_semana=dia_semana,
-            activo=True
-        )
-        
-        if not horarios.exists():
-            fecha_actual += timedelta(days=1)
-            continue
-        
-        # Para cada horario, generar slots de 30 minutos
-        for horario in horarios:
-            hora_actual = datetime.combine(fecha_actual, horario.hora_inicio)
-            hora_fin = datetime.combine(fecha_actual, horario.hora_fin)
             
-            while hora_actual + timedelta(minutes=duracion_minutos) <= hora_fin:
-                # Verificar si ya hay cita en este slot
-                cita_existe = Cita.objects.filter(
-                    medico=medico,
-                    fecha_hora=hora_actual,
-                    estado__in=['PENDIENTE', 'CONFIRMADA']
-                ).exists()
+        dia_semana = fecha_actual.weekday()
+        horarios_del_dia = horarios_por_dia[dia_semana]
+        
+        for horario in horarios_del_dia:
+            hora_actual_dt = datetime.combine(fecha_actual, horario.hora_inicio)
+            hora_fin_dt = datetime.combine(fecha_actual, horario.hora_fin)
+            
+            while hora_actual_dt + timedelta(minutes=duracion_minutos) <= hora_fin_dt:
                 
-                if not cita_existe:
+                if hora_actual_dt not in citas_ocupadas:
                     slots.append({
-                        'fecha_hora': hora_actual.isoformat(),
+                        'fecha_hora': hora_actual_dt.isoformat(),
                         'disponible': True
                     })
+                hora_actual_dt += timedelta(minutes=duracion_minutos)
                 
-                hora_actual += timedelta(minutes=duracion_minutos)
-        
         fecha_actual += timedelta(days=1)
-    
+        
     return slots
 
 def esta_disponible(medico, fecha, hora_inicio, hora_fin):
