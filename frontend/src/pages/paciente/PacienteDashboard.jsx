@@ -7,7 +7,11 @@ import {
   FRANJAS_MOCK,
   getMedicos,
   getMedicoPorId,
+  getMedicosDisponibles,
   citasStore,
+  pacienteTieneChoqueDeHorario,
+  topeEpsExcedido,
+  restriccionFrecuenciaExcedida,
 } from "../../context/mockData";
 import {
   TopBar,
@@ -96,12 +100,12 @@ export default function PacienteDashboard() {
   const historial = citas.filter((c) => c.estado === "completada" || c.estado === "cancelada");
   const proximaCita = [...proximas].sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
 
-  const medicosFiltrados = getMedicos().filter(
+  const medicosFiltrados = getMedicosDisponibles().filter(
     (m) => m.especialidades.includes(wizardEspecialidad) && m.sede === wizardSede
   );
 
   const sedesConMedico = SEDES.filter((sede) =>
-    getMedicos().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede)
+    getMedicosDisponibles().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede)
   );
 
   const medicoElegido = wizardMedicoId ? getMedicoPorId(wizardMedicoId) : null;
@@ -175,10 +179,25 @@ export default function PacienteDashboard() {
     }
   }
 
-  // TODO backend: aquí se validarán las reglas de negocio reales (tope EPS,
-  // restricción de frecuencia, franja aún disponible — flujo 3.1 paso 8).
-  // Por ahora, siempre se asume válido.
-    function validarReglasNegocio() {
+  // Reglas de negocio del superadministrador: el paciente
+  // no puede tener dos citas activas a la misma fecha y hora (con cualquier
+  // médico), y la EPS del paciente no puede haber superado su tope de citas
+  // o presupuesto vigente para esta especialidad.
+  function validarReglasNegocio() {
+    if (pacienteTieneChoqueDeHorario(paciente.id, wizardFecha, wizardFranja, citaReprogramando)) {
+      return { ok: false, mensaje: "Ya tienes otra cita agendada en esa misma fecha y hora." };
+    }
+
+    const frecuencia = restriccionFrecuenciaExcedida(paciente.id, wizardEspecialidad, citaReprogramando);
+    if (frecuencia.excedido) {
+      return { ok: false, mensaje: frecuencia.mensaje };
+    }
+
+    const tope = topeEpsExcedido(paciente.id, wizardEspecialidad, citaReprogramando);
+    if (tope.excedido) {
+      return { ok: false, mensaje: tope.mensaje };
+    }
+
     return { ok: true };
   }
 
@@ -429,7 +448,7 @@ export default function PacienteDashboard() {
                   </div>
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardSede} onClick={() => setWizardPaso(3)} />
-                    <button onClick={() => setWizardPaso(1)} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setMensaje(""); setWizardPaso(1); }} className="text-sm text-[#48605C] hover:underline">
                       ← Cambiar especialidad
                     </button>
                   </div>
@@ -460,7 +479,7 @@ export default function PacienteDashboard() {
                   </div>
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardMedicoId} onClick={() => setWizardPaso(4)} />
-                    <button onClick={() => setWizardPaso(2)} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setMensaje(""); setWizardPaso(2); }} className="text-sm text-[#48605C] hover:underline">
                       ← Cambiar sede
                     </button>
                   </div>
@@ -513,7 +532,7 @@ export default function PacienteDashboard() {
 
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardFecha || !wizardFranja} onClick={() => setWizardPaso(5)} />
-                    <button onClick={() => setWizardPaso(3)} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setMensaje(""); setWizardPaso(3); }} className="text-sm text-[#48605C] hover:underline">
                       ← Cambiar médico
                     </button>
                   </div>
@@ -560,7 +579,7 @@ export default function PacienteDashboard() {
                       <span className="material-symbols-outlined text-lg">check</span>
                       Confirmar cita
                     </button>
-                    <button onClick={() => setWizardPaso(4)} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setMensaje(""); setWizardPaso(4); }} className="text-sm text-[#48605C] hover:underline">
                       ← Volver y editar
                     </button>
                   </div>

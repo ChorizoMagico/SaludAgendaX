@@ -236,7 +236,7 @@ export default function Principal() {
           <div className="mb-8 sm:mb-12">
             <h2 className="text-2xl sm:text-3xl font-semibold text-[#0F3D3E] border-l-4 border-[#0E9668] pl-4">Especialidades médicas</h2>
             <p className="text-[#48605C] mt-2 text-sm sm:text-base">
-              Estas son las especialidades médicas ofrecidas por la institución.
+              Estas son algunas de las especialidades médicas ofrecidas por la institución.
               <span className="hidden md:inline"> Pasa el mouse sobre cada una para más información.</span>
             </p>
           </div>

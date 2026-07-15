@@ -34,5 +34,5 @@ export const REDIRECT_BY_ROLE = {
   paciente: "/paciente/dashboard",
   medico: "/medico/mi-agenda",
   administrativo: "/admin/dashboard",
-  superadministrador: "/admin/dashboard",
+  superadministrador: "/superadmin/dashboard",
 };

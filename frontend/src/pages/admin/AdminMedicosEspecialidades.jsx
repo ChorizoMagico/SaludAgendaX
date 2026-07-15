@@ -3,7 +3,7 @@ import {
   ESPECIALIDADES,
   SEDES,
   DIAS_SEMANA,
-  getMedicos,
+  getMedicosGestionables,
   registrarMedico,
   toggleActivoUsuario,
   eliminarMedico,
@@ -56,7 +56,7 @@ export function TabMedicos({ todasLasCitas }) {
   const [filtroEspecialidad, setFiltroEspecialidad] = useState("");
   const [filtroSede, setFiltroSede] = useState("");
 
-  const medicos = getMedicos();
+  const medicos = getMedicosGestionables();
 
   const medicosFiltrados = (() => {
     const q = busqueda.trim().toLowerCase();
