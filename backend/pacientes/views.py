@@ -20,12 +20,13 @@ from .serializers import (
     PacientePerfilSerializer,
     CitaSerializer,
     CitaCancelacionSerializer,
-    CitaListSerializer
+    CitaListSerializer,
+    HorarioMedicoSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico
+from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico
 from .services import CitaService
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
@@ -545,6 +546,36 @@ class EspecialidadViewSet(ModelViewSet):
     def perform_destroy(self, instance):
         instance.activo = False
         instance.save(update_fields=['activo', 'fecha_actualizacion'])
+
+
+class HorarioMedicoViewSet(ModelViewSet):
+    """
+    CRUD de horarios médicos (HU-018).
+
+    Permite:
+    - Listar horarios
+    - Crear horarios
+    - Editar horarios
+    - Eliminar horarios
+    """
+
+    serializer_class = HorarioMedicoSerializer
+    queryset = HorarioMedico.objects.select_related("medico", "medico__usuario").order_by(
+        "medico", "dia_semana", "hora_inicio"
+    )
+
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeUser]
+
+    http_method_names = [
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+        "head",
+        "options",
+    ]
 
 
 class CitaViewSet(ModelViewSet):

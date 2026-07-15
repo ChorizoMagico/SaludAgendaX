@@ -5,6 +5,7 @@ from .views import DashboardMetricsView
 
 router = DefaultRouter()
 router.register(r'especialidades', views.EspecialidadViewSet, basename='especialidad')
+router.register(r'horarios', views.HorarioMedicoViewSet, basename='horario')
 router.register(r'citas', views.CitaViewSet, basename='cita')
 
 urlpatterns = [
