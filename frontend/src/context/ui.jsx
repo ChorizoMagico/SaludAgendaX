@@ -11,7 +11,7 @@ import { Link } from "react-router-dom";
 // ---------- Barra superior ----------
 export function TopBar({ nombre }) {
   return (
-    <header className="bg-white border-b border-[#DCE8E5] sticky top-0 z-30">
+    <header className="bg-white/70 backdrop-blur-md border-b border-[#DCE8E5] sticky top-0 z-30">
       <div className="max-w-[1200px] mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-[#0E9668] text-2xl">stethoscope</span>
@@ -34,8 +34,11 @@ export function TopBar({ nombre }) {
 
 // ---------- Navegación responsive ----------
 // Nav lateral en desktop (md+) y barra fija abajo en mobile, a partir de la
-// misma lista de tabs. tabs: [{ id, label, icon }]
+// misma lista de tabs.
 export function DashboardNav({ tabs, activo, onChange }) {
+  const badgeClase = (color) =>
+    color === "danger" ? "bg-[#FFDAD6] text-[#BA1A1A]" : "bg-[#0E9668] text-white";
+
   return (
     <>
       <nav className="hidden md:block md:w-56 shrink-0">
@@ -49,7 +52,16 @@ export function DashboardNav({ tabs, activo, onChange }) {
               }`}
             >
               <span className="material-symbols-outlined text-lg">{t.icon}</span>
-              {t.label}
+              <span className="flex-1 text-left">{t.label}</span>
+              {!!t.badge && (
+                <span
+                  className={`text-xs font-bold rounded-full min-w-[1.4rem] h-5 px-1.5 flex items-center justify-center shrink-0 ${
+                    activo === t.id ? "bg-white/25 text-white" : badgeClase(t.badgeColor)
+                  }`}
+                >
+                  {t.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -61,12 +73,23 @@ export function DashboardNav({ tabs, activo, onChange }) {
             <button
               key={t.id}
               onClick={() => onChange(t.id)}
-              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-semibold transition-colors duration-200 ${
+              className={`relative flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-semibold transition-colors duration-200 ${
                 activo === t.id ? "text-[#0E9668]" : "text-[#48605C]"
               }`}
             >
-              <span className="material-symbols-outlined text-xl">{t.icon}</span>
-              {t.label}
+              <span className="relative">
+                <span className="material-symbols-outlined text-xl">{t.icon}</span>
+                {!!t.badge && (
+                  <span
+                    className={`absolute -top-1 -right-2 text-[10px] font-bold rounded-full min-w-[1.1rem] h-[1.1rem] px-1 flex items-center justify-center ${badgeClase(
+                      t.badgeColor
+                    )}`}
+                  >
+                    {t.badge}
+                  </span>
+                )}
+              </span>
+              {t.labelCorto ?? t.label}
             </button>
           ))}
         </div>
@@ -121,6 +144,18 @@ export function DashboardStyles() {
         .saludagendax-calendar .rbc-event { font-size: 0.65rem; padding: 1px 3px; }
       }
     `}</style>
+  );
+}
+
+// ---------- Fondo decorativo de los dashboards ----------
+export function DashboardBackground() {
+  return (
+    <div className="sax-dashboard-bg">
+      <div className="sax-blob-1" />
+      <div className="sax-blob-2" />
+      <div className="sax-blob-3" />
+      <div className="sax-blob-4" />
+    </div>
   );
 }
 

@@ -16,6 +16,7 @@ import {
 import {
   TopBar,
   DashboardNav,
+  DashboardBackground,
   navMobilePadding,
   Campo,
   CampoSolo,
@@ -277,6 +278,7 @@ export default function PacienteDashboard() {
 
   return (
     <div className="min-h-screen bg-[#FBFDFC] text-[#1A2624] sax-root">
+      <DashboardBackground />
       <SaxStyles />
       <TopBar nombre={`${paciente.nombre} ${paciente.apellido}`} />
 

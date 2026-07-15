@@ -300,7 +300,7 @@ export default function Register() {
                       <p className="text-[#48605C] text-sm">Elige el rol con el que vas a usar SaludAgendaX.</p>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-3 gap-2 sm:gap-3">
                       {ROLES_REGISTRABLES.map((r) => {
                         const activo = r.key === rol;
                         return (
@@ -308,20 +308,22 @@ export default function Register() {
                             key={r.key}
                             type="button"
                             onClick={() => seleccionarRol(r.key)}
-                            className={`text-left p-4 rounded-lg border transition-all duration-200 ${
+                            className={`text-left p-3 sm:p-4 rounded-lg border transition-all duration-200 ${
                               activo
                                 ? "border-[#0E9668] bg-[#D3F3E6]/60 shadow-sm"
                                 : "border-[#DCE8E5] hover:border-[#0E9668] hover:bg-[#F3F8F7]"
                             }`}
                           >
                             <span
-                              className={`material-symbols-outlined text-2xl mb-2 block ${
+                              className={`material-symbols-outlined text-xl sm:text-2xl mb-1.5 sm:mb-2 block ${
                                 activo ? "text-[#0E9668]" : "text-[#48605C]"
                               }`}
                             >
                               {r.icon}
                             </span>
-                            <span className="block font-semibold text-sm text-[#0F3D3E]">{r.label}</span>
+                            <span className="block font-semibold text-xs sm:text-sm text-[#0F3D3E] leading-tight">
+                              {r.label}
+                            </span>
                           </button>
                         );
                       })}

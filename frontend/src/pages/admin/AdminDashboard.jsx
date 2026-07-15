@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import { getMedicos, getMedicoPorId, getPacientePorId, citasStore } from "../../context/mockData";
-import { TopBar, DashboardNav, navMobilePadding, EstadoBadge, DashboardStyles } from "../../context/ui";
+import { TopBar, DashboardNav, DashboardBackground, navMobilePadding, EstadoBadge, DashboardStyles } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
 
 import TabCitas from "./AdminCitas";
@@ -97,6 +97,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-[#FBFDFC] text-[#1A2624]">
+      <DashboardBackground />
       <DashboardStyles />
       <TopBar nombre={`${admin.nombre} ${admin.apellido}`} />
 
