@@ -24,6 +24,7 @@ from .serializers import (
     CitaCancelacionSerializer,
     CitaListSerializer,
     HorarioMedicoSerializer,
+    AgendaMedicoSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
@@ -481,6 +482,49 @@ def calendario_citas(request):
         'total_citas': citas.count(),
         'dias': dias,
     }, status=status.HTTP_200_OK)
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def mi_agenda_medico(request):
+    """
+    HU-024 - Agenda personal del médico.
+
+    Devuelve únicamente las citas del médico autenticado.
+    """
+
+    medico = Medico.objects.filter(usuario=request.user).first()
+
+    if not medico:
+        return Response(
+            {"error": "El usuario autenticado no tiene perfil de médico."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    citas = (
+        Cita.objects.select_related(
+            "paciente",
+            "paciente__usuario",
+            "especialidad",
+            "eps",
+        )
+        .filter(medico=medico)
+        .order_by("fecha", "hora_inicio")
+    )
+
+    serializer = AgendaMedicoSerializer(citas, many=True)
+
+    return Response({
+        "medico": {
+            "id": medico.id,
+            "nombre": str(medico),
+        },
+        "total_citas": citas.count(),
+        "citas": serializer.data,
+    })
+
+
 
 
 @api_view(['GET'])
