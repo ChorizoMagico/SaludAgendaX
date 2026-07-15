@@ -370,3 +370,48 @@ class CitaService:
             )
 
             return cita_bloqueada, alerts
+        
+
+
+    @classmethod
+    def buscar_citas(cls, queryset, filtros):
+        """
+        Aplica filtros dinámicos sobre un queryset de citas.
+
+        Filtros soportados:
+        - fecha
+        - medico
+        - paciente
+        - especialidad
+        - eps
+        - estado
+        """
+
+        fecha = filtros.get("fecha")
+        medico = filtros.get("medico")
+        paciente = filtros.get("paciente")
+        especialidad = filtros.get("especialidad")
+        eps = filtros.get("eps")
+        estado = filtros.get("estado")
+
+        if fecha:
+            queryset = queryset.filter(fecha=fecha)
+
+        if medico:
+            queryset = queryset.filter(medico_id=medico)
+
+        if paciente:
+            queryset = queryset.filter(paciente_id=paciente)
+
+        if especialidad:
+            queryset = queryset.filter(especialidad_id=especialidad)
+
+        if eps:
+            queryset = queryset.filter(eps_id=eps)
+
+        if estado:
+            queryset = queryset.filter(estado=estado)
+
+        return queryset
+        
+    

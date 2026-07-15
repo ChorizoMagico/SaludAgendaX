@@ -36,7 +36,6 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import permission_classes
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count
 
 @api_view(['POST'])
 def registro_paciente(request):
@@ -588,6 +587,12 @@ class HorarioMedicoViewSet(ModelViewSet):
     ]
 
 
+class CitaPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
 class CitaViewSet(ModelViewSet):
     """
     POST /api/citas/
@@ -610,6 +615,7 @@ class CitaViewSet(ModelViewSet):
     authentication_classes = [JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAdministrativeOrAuthenticatedPatient]
     pagination_class = CitaPagination
+    pagination_class = CitaPagination
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
@@ -621,6 +627,16 @@ class CitaViewSet(ModelViewSet):
             'especialidad',
             'eps',
         ).order_by('-fecha', '-hora_inicio')
+        if not IsAdministrativeUser.is_admin_user(self.request.user):
+            queryset = queryset.filter(paciente__usuario=self.request.user)
+
+        queryset = CitaService.buscar_citas(
+            queryset,
+            self.request.query_params
+        )
+        return queryset
+    
+    
         if not IsAdministrativeUser.is_admin_user(self.request.user):
             queryset = queryset.filter(paciente__usuario=self.request.user)
 
