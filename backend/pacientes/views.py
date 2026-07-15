@@ -27,8 +27,7 @@ from .serializers import (
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico
-from .services import CitaService
+from .models import Cita, Especialidad, HorarioMedico
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -715,16 +714,40 @@ class CitaViewSet(ModelViewSet):
         if not serializer.is_valid():
             return self._error_response(serializer.errors)
 
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
+
+        medico = serializer.validated_data['medico']
+        fecha = serializer.validated_data['fecha']
+        hora_inicio = serializer.validated_data['hora_inicio']
+        hora_fin = serializer.validated_data['hora_fin']
+
+
+        if not esta_disponible(medico, fecha, hora_inicio, hora_fin):
+            return self._error_response(
+                {'non_field_errors': ['El médico no tiene disponibilidad en este horario o está bloqueado.']},
+                message='Conflicto de horario'
+            )
+
+
+        horario = HorarioMedico.objects.filter(medico=medico, dia_semana=fecha.weekday()).first()
+        limite = horario.max_citas_por_hora if horario else 4 # Valor por defecto
+        
+        citas_existentes = Cita.objects.filter(
+            medico=medico, fecha=fecha, hora_inicio=hora_inicio
+        ).exclude(estado='CANCELADA').count()
+
+        if citas_existentes >= limite:
+            return self._error_response(
+                {'non_field_errors': ['Se ha alcanzado el límite de citas para esta hora.']},
+                message='Capacidad máxima alcanzada'
+            )
+
+        response = super().create(request, *args, **kwargs)
         return Response(
             {
                 'status': 'success',
-                'code': 201,
-                'data': serializer.data,
+                'data': response.data,
             },
-            status=status.HTTP_201_CREATED,
-            headers=headers,
+            status=response.status_code,
         )
 
 class DashboardMetricsView(APIView):
