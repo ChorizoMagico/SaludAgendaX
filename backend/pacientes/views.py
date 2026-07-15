@@ -1,5 +1,5 @@
 from rest_framework import serializers, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth.models import User
@@ -25,7 +25,7 @@ from .serializers import (
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad
+from .models import Cita, Especialidad, HorarioMedico
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -440,8 +440,14 @@ class CitaViewSet(ModelViewSet):
                 message='Capacidad máxima alcanzada'
             )
 
-
-        return super().create(request, *args, **kwargs)
+        response = super().create(request, *args, **kwargs)
+        return Response(
+            {
+                'status': 'success',
+                'data': response.data,
+            },
+            status=response.status_code,
+        )
 
 class DashboardMetricsView(APIView):
     # Solo administrativos/superadmin accede
