@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views
 from rest_framework.routers import DefaultRouter
+from .views import DashboardMetricsView
 
 router = DefaultRouter()
 router.register(r'especialidades', views.EspecialidadViewSet, basename='especialidad')
@@ -17,6 +18,7 @@ urlpatterns = [
     path('citas/historial/', views.historial_citas_paciente, name='historial_citas'),
     path('pacientes/registro/', views.registro_paciente, name='registro_paciente'),
     path('pacientes/login/', views.PacienteLoginView.as_view(), name='login'),
+    path('dashboard/metrics/', DashboardMetricsView.as_view(), name='dashboard-metrics'),
 ]
 
 urlpatterns += router.urls

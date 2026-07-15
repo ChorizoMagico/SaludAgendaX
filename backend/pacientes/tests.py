@@ -19,6 +19,7 @@ from .models import (
 
 class EspecialidadEndpointTests(APITestCase):
     def setUp(self):
+
         Group.objects.get_or_create(name='administrativo')
         Group.objects.get_or_create(name='superadministrador')
 
