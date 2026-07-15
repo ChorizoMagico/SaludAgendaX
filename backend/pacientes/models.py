@@ -169,6 +169,7 @@ class ExcepcionMedico(models.Model):
     """Bloqueos de agenda del médico por permisos, vacaciones u otras novedades."""
 
     medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='excepciones_medicas')
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='excepciones_medicas')
     fecha = models.DateField()
     hora_inicio = models.TimeField(null=True, blank=True)
     hora_fin = models.TimeField(null=True, blank=True)
@@ -200,13 +201,6 @@ class NotificacionPendiente(models.Model):
 
     class Meta:
         db_table = 'notificacion_pendiente'
-        indexes = [
-            models.Index(
-                fields=['estado'], 
-                name='notif_pendiente_idx',
-                condition=models.Q(estado='pendiente') # Índice parcial para optimización
-            )
-        ]
 
 
 class ExcepcionHorario(models.Model):

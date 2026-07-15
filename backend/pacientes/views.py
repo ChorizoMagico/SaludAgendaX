@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
 from rest_framework.views import APIView
 from django.db.models import Count, Q
+from .disponibilidad import esta_disponible
+
 
 from .serializers import (
     PacienteRegistroSerializer, 
@@ -438,22 +440,8 @@ class CitaViewSet(ModelViewSet):
                 message='Capacidad máxima alcanzada'
             )
 
-        response = super().create(request, *args, **kwargs)
-        return Response(
-            {
-                'status': 'success',
-                'code': 201,
-                'message': 'Cita creada exitosamente',
-                'data': response_serializer.data,
-                'agenda': {
-                    'medico': cita.medico_id,
-                    'fecha': cita.fecha,
-                    'citas_ocupadas': agenda_ocupada,
-                },
-                'alerts': serializer.context.get('alerts', []),
-            },
-            status=status.HTTP_201_CREATED,
-        )
+
+        return super().create(request, *args, **kwargs)
 
 class DashboardMetricsView(APIView):
     # Solo administrativos/superadmin accede
