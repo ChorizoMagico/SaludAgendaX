@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import {
   MOCK_USERS,
   agregarUsuarioMock,
@@ -15,6 +15,34 @@ import {
 const AuthContext = createContext(null);
 
 // ─────────────────────────────────────────────────────────────────────────
+// Sesión con expiración por inactividad.
+// Se guarda todo en sessionStorage bajo una sola clave ("session"), como
+// { token, user, expiraEn }. sessionStorage (a diferencia de localStorage)
+// se borra solo al cerrar la pestaña/navegador, lo cual combina bien con
+// una sesión que además expira por tiempo.
+// ─────────────────────────────────────────────────────────────────────────
+const SESSION_KEY = "session";
+const SESSION_DURATION_MS = 20 * 60 * 1000; // 20 minutos
+
+function leerSesion() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function guardarSesion(token, user, expiraEn) {
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, user, expiraEn }));
+}
+
+function borrarSesion() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // MOCK — bórralo (junto con USE_MOCK, mockLogin y mockRegister) cuando el
 // backend real de /auth esté listo. MOCK_USERS ahora vive en
 // shared/mockData.js, para que los dashboards de paciente y médico lean
@@ -27,13 +55,11 @@ function mockLogin(cedula, password) {
     setTimeout(() => {
       const match = MOCK_USERS.find((m) => m.cedula === cedula && m.password === password);
       if (!match) {
-        // Misma forma de error que devolvería axios, para que Login.jsx
-        // no tenga que distinguir entre mock y API real.
         reject({ response: { data: { detail: "Credenciales incorrectas. Verifica tu documento de identidad y contraseña." } } });
         return;
       }
       resolve({ data: { token: `mock-token-${match.user.rol}-${Date.now()}`, user: match.user } });
-    }, 600); // simula latencia de red
+    }, 600);
   });
 }
 
@@ -69,29 +95,16 @@ function mockRegister(datos) {
     }, 600);
   });
 }
-// TODO backend (Celery): este mock simula únicamente "crear el token y
-// responder". En el backend real, este endpoint encola la tarea de envío
-// de correo (enviar_correo_recuperacion.delay(correo, token)) y responde
-// de inmediato — no espera a que el correo salga. Por eso aquí tampoco
-// "esperamos" nada más que el setTimeout que simula latencia de red.
+
 function mockForgotPassword(correo) {
   return new Promise((resolve) => {
     setTimeout(() => {
       const match = MOCK_USERS.find((m) => m.user.correo === correo);
-
-      // Misma respuesta exista o no la cuenta, para no revelar qué
-      // correos están registrados (esto también debe respetarse en el
-      // backend real).
       if (!match) {
         resolve({ data: { enviado: true } });
         return;
       }
-
       const token = crearTokenReset(match.user.id);
-      // Sin correo real todavía: dejamos el link en consola y también lo
-      // devolvemos como _mockToken para poder mostrarlo en pantalla.
-      // Ambas cosas desaparecen en cuanto el backend mande el correo de
-      // verdad — el frontend nunca debería recibir el token en la respuesta.
       console.info(`[MOCK] Link de recuperación: /reset-password?token=${token}`);
       resolve({ data: { enviado: true, _mockToken: token } });
     }, 600);
@@ -107,7 +120,7 @@ function mockResetPassword(token, nuevaPassword) {
         return;
       }
       actualizarPasswordMock(userId, nuevaPassword);
-      consumirTokenReset(token); // token de un solo uso
+      consumirTokenReset(token);
       resolve({ data: { ok: true } });
     }, 600);
   });
@@ -117,34 +130,97 @@ function mockResetPassword(token, nuevaPassword) {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
-  // Al cargar la app, recupera la sesión guardada (si existe)
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    const storedUser = localStorage.getItem("user");
-    if (token && storedUser) {
-      setUser(JSON.parse(storedUser));
-      // axiosClient.defaults.headers.common.Authorization = `Bearer ${token}`;
+  // Referencias para el timer de auto-logout (no deben disparar re-render).
+  const timeoutRef = useRef(null);
+
+  const limpiarTimer = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
-    setLoading(false);
   }, []);
 
+  // Cierra la sesión. `porExpiracion` distingue un logout manual de uno
+  // disparado porque se venció el tiempo, para poder avisarle al usuario.
+  const logout = useCallback((porExpiracion = false) => {
+    limpiarTimer();
+    borrarSesion();
+    // delete axiosClient.defaults.headers.common.Authorization;
+    setUser(null);
+    if (porExpiracion) setSessionExpired(true);
+  }, [limpiarTimer]);
+
+  // Programa el cierre automático para el instante exacto en que vence
+  // `expiraEn`. Si ya venció (ej. la pestaña estuvo en segundo plano), lo
+  // dispara casi de inmediato.
+  const programarAutoLogout = useCallback((expiraEn) => {
+    limpiarTimer();
+    const restante = Math.max(expiraEn - Date.now(), 0);
+    timeoutRef.current = setTimeout(() => logout(true), restante);
+  }, [limpiarTimer, logout]);
+
+  // Extiende la sesión 20 minutos más a partir de "ahora" y reprograma el
+  // timer. Se llama tanto al iniciar sesión como cada vez que se detecta
+  // actividad del usuario.
+  const renovarSesion = useCallback(() => {
+    const actual = leerSesion();
+    if (!actual) return;
+    const expiraEn = Date.now() + SESSION_DURATION_MS;
+    guardarSesion(actual.token, actual.user, expiraEn);
+    programarAutoLogout(expiraEn);
+  }, [programarAutoLogout]);
+
+  // Al cargar la app, recupera la sesión guardada (si existe y no venció).
+  useEffect(() => {
+    const sesion = leerSesion();
+    if (sesion) {
+      if (sesion.expiraEn <= Date.now()) {
+        borrarSesion();
+      } else {
+        setUser(sesion.user);
+        // axiosClient.defaults.headers.common.Authorization = `Bearer ${sesion.token}`;
+        programarAutoLogout(sesion.expiraEn);
+      }
+    }
+    setLoading(false);
+    return limpiarTimer;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Renueva la sesión ante actividad real del usuario (click, teclado,
+  // scroll), para que los 20 minutos sean de INACTIVIDAD y no un límite
+  // fijo desde el login. Throttleado a lo sumo cada 30s para no escribir
+  // en sessionStorage en cada pixel de scroll.
+  useEffect(() => {
+    if (!user) return;
+
+    let ultimaRenovacion = 0;
+    const THROTTLE_MS = 30 * 1000;
+
+    function alDetectarActividad() {
+      const ahora = Date.now();
+      if (ahora - ultimaRenovacion < THROTTLE_MS) return;
+      ultimaRenovacion = ahora;
+      renovarSesion();
+    }
+
+    const eventos = ["mousedown", "keydown", "scroll", "touchstart"];
+    eventos.forEach((ev) => window.addEventListener(ev, alDetectarActividad));
+    return () => eventos.forEach((ev) => window.removeEventListener(ev, alDetectarActividad));
+  }, [user, renovarSesion]);
+
   // Mantiene sincronizado al usuario de la sesión activa con MOCK_USERS.
-  // Sin esto, si un administrador edita a este mismo usuario (por ejemplo,
-  // el horario, la sede o las especialidades de un médico) mientras ese
-  // médico ya tiene sesión abierta, el objeto `user` en memoria (y el de
-  // localStorage) se queda desactualizado hasta que cierre sesión y vuelva
-  // a entrar. `subscribeUsuarios` avisa cada vez que MOCK_USERS cambia, y
-  // aquí releemos únicamente al usuario logueado.
   useEffect(() => {
     if (!USE_MOCK || !user) return;
     return subscribeUsuarios(() => {
       const actualizado = getUsuarioPorId(user.id);
       if (!actualizado) return; // el usuario fue eliminado por un admin
       setUser((prev) => {
-        // Evita un re-render/loop innecesario si nada cambió realmente.
         if (prev && JSON.stringify(prev) === JSON.stringify(actualizado)) return prev;
-        localStorage.setItem("user", JSON.stringify(actualizado));
+        const sesion = leerSesion();
+        if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn);
         return actualizado;
       });
     });
@@ -156,12 +232,14 @@ export function AuthProvider({ children }) {
       ? await mockLogin(cedula, password)
       : await axiosClient.post("/auth/login", { cedula, password });
 
-    localStorage.setItem("token", data.token);
-    localStorage.setItem("user", JSON.stringify(data.user));
+    const expiraEn = Date.now() + SESSION_DURATION_MS;
+    guardarSesion(data.token, data.user, expiraEn);
     // axiosClient.defaults.headers.common.Authorization = `Bearer ${data.token}`;
+    setSessionExpired(false);
     setUser(data.user);
+    programarAutoLogout(expiraEn);
 
-    return data.user; // Login.jsx usa esto para redirigir según data.user.rol
+    return data.user;
   }
 
   async function register(datos) {
@@ -169,46 +247,34 @@ export function AuthProvider({ children }) {
       ? await mockRegister(datos)
       : await axiosClient.post("/auth/register", datos);
 
-    // Registro exitoso deja al usuario con sesión iniciada (como login)
-    localStorage.setItem("token", data.token);
-    localStorage.setItem("user", JSON.stringify(data.user));
+    const expiraEn = Date.now() + SESSION_DURATION_MS;
+    guardarSesion(data.token, data.user, expiraEn);
     // axiosClient.defaults.headers.common.Authorization = `Bearer ${data.token}`;
+    setSessionExpired(false);
     setUser(data.user);
+    programarAutoLogout(expiraEn);
 
-    return data.user; // Register.jsx usa esto para redirigir según data.user.rol
+    return data.user;
   }
 
-  // Actualiza el perfil del usuario autenticado ("Mi perfil" en ambos
-  // dashboards). Sincroniza el mock compartido, el localStorage y el
-  // estado en memoria, para que cualquier otra pantalla que lea al usuario
-  // (o a MOCK_USERS) vea el cambio de inmediato.
   async function updateProfile(cambios) {
     const actualizado = USE_MOCK
       ? actualizarUsuarioMock(user.id, cambios)
       : (await axiosClient.put(`/usuarios/${user.id}`, cambios)).data;
 
-    localStorage.setItem("user", JSON.stringify(actualizado));
+    const sesion = leerSesion();
+    if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn);
     setUser(actualizado);
     return actualizado;
   }
 
-  function logout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    // delete axiosClient.defaults.headers.common.Authorization;
-    setUser(null);
-  }
-
-  // Solicita el envío del correo de recuperación. No requiere sesión activa.
   async function forgotPassword(correo) {
     const { data } = USE_MOCK
       ? await mockForgotPassword(correo)
       : await axiosClient.post("/auth/forgot-password", { correo });
-    return data; // { enviado: true, _mockToken? } — _mockToken solo existe en el mock
+    return data;
   }
 
-  // Completa la recuperación con el token recibido por correo (o por el
-  // _mockToken mientras no hay backend). No requiere sesión activa.
   async function resetPassword(token, nuevaPassword) {
     const { data } = USE_MOCK
       ? await mockResetPassword(token, nuevaPassword)
@@ -221,12 +287,14 @@ export function AuthProvider({ children }) {
     rol: user?.rol ?? null,
     isAuthenticated: !!user,
     loading,
+    sessionExpired,
+    clearSessionExpired: () => setSessionExpired(false),
     login,
     register,
     updateProfile,
     forgotPassword,
     resetPassword,
-    logout,
+    logout: () => logout(false),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
