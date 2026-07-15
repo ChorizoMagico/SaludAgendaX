@@ -36,6 +36,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import permission_classes
 from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count
 
 @api_view(['POST'])
 def registro_paciente(request):
