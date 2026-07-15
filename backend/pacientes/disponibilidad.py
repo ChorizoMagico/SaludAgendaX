@@ -25,27 +25,13 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
     for h in horarios_db:
         horarios_por_dia[h.dia_semana].append(h)
         
-    
-    excepciones_db = ExcepcionHorario.objects.filter(
-        medico=medico,
-        fecha__range=[fecha_actual, fecha_limite],
-        tipo='BLOQUEO'
-    )
-    
-    dias_bloqueados = {ex.fecha for ex in excepciones_db} 
-    
-    
-    citas_db = Cita.objects.filter(
-        medico=medico,
-        fecha__range=[fecha_actual, fecha_limite],
-        estado__in=['PENDIENTE', 'CONFIRMADA']
-    )
-    
-    citas_ocupadas = {cita.fecha_hora for cita in citas_db} 
-    
-    
-    while fecha_actual <= fecha_limite:
-        if fecha_actual in dias_bloqueados:
+        # Verificar si hay excepción (día libre, cerrado, etc)
+        excepcion = ExcepcionMedico.objects.filter(
+            medico=medico,
+            fecha=fecha_actual
+        ).first()
+        
+        if excepcion and not excepcion.disponible:
             fecha_actual += timedelta(days=1)
             continue
             
