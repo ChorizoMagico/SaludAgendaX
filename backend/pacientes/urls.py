@@ -22,6 +22,7 @@ urlpatterns = [
     path('pacientes/registro/', views.registro_paciente, name='registro_paciente'),
     path('pacientes/login/', views.PacienteLoginView.as_view(), name='login'),
     path('dashboard/metrics/', DashboardMetricsView.as_view(), name='dashboard-metrics'),
+    path("dashboard/ocupacion/",views.DashboardOcupacionView.as_view(),name="dashboard-ocupacion",),
 ]
 
 urlpatterns += router.urls

@@ -34,6 +34,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import permission_classes
 from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count
 
 @api_view(['POST'])
 def registro_paciente(request):
@@ -701,4 +702,93 @@ class DashboardMetricsView(APIView):
         return Response({
             "fecha_corte": hoy,
             "metricas": stats
+        })
+    
+
+class DashboardOcupacionView(APIView):
+    """
+    HU-021 - Reporte de ocupación por médico y especialidad.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+
+        queryset = Cita.objects.exclude(estado="CANCELADA")
+
+        fecha_inicio = request.query_params.get("fecha_inicio")
+        fecha_fin = request.query_params.get("fecha_fin")
+
+        if fecha_inicio:
+            queryset = queryset.filter(fecha__gte=fecha_inicio)
+
+        if fecha_fin:
+            queryset = queryset.filter(fecha__lte=fecha_fin)
+
+        total_citas = queryset.count()
+
+        ocupacion_medicos = (
+            queryset.values(
+                "medico__usuario__first_name",
+                "medico__usuario__last_name",
+            )
+            .annotate(
+                total=Count("id")
+            )
+            .order_by("-total")
+        )
+
+        ocupacion_especialidades = (
+            queryset.values(
+                "especialidad__nombre",
+            )
+            .annotate(
+                total=Count("id")
+            )
+            .order_by("-total")
+        )
+
+        ocupacion_eps = (
+            queryset.values(
+                "eps__nombre",
+            )
+            .annotate(
+                total=Count("id")
+            )
+            .order_by("-total")
+        )
+
+        return Response({
+
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+
+            "total_citas": total_citas,
+
+            "por_medico": [
+                {
+                    "medico": (
+                        f"{item['medico__usuario__first_name']} "
+                        f"{item['medico__usuario__last_name']}"
+                    ).strip(),
+                    "total": item["total"],
+                }
+                for item in ocupacion_medicos
+            ],
+
+            "por_especialidad": [
+                {
+                    "especialidad": item["especialidad__nombre"],
+                    "total": item["total"],
+                }
+                for item in ocupacion_especialidades
+            ],
+
+            "por_eps": [
+                {
+                    "eps": item["eps__nombre"],
+                    "total": item["total"],
+                }
+                for item in ocupacion_eps
+            ],
         })
