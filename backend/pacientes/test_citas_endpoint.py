@@ -60,8 +60,8 @@ class EspecialidadEndpointTests(APITestCase):
         response = self.client.get(reverse('especialidad-list'))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['nombre'], 'Cardiologia')
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['nombre'], 'Cardiologia')
 
     def test_non_admin_cannot_create_specialty(self):
         self.client.force_authenticate(user=self.normal_user)
@@ -269,6 +269,51 @@ class CitasEndpointTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('paciente', response.data['errors'])
+
+    def test_full_flow_medico_especialidad_relationship(self):
+        """
+        HU-005: Creación de especialidad con médico asignado y posterior agendamiento de cita.
+        Verifica la relación Especialidad <-> Medico en el flujo completo.
+        """
+        # El administrador crea una especialidad y asigna el médico.
+        self.client.force_authenticate(user=self.admin_user)
+        create_response = self.client.post(
+            reverse('especialidad-list'),
+            {
+                'nombre': 'Reumatologia',
+                'descripcion': 'Dolores articulares',
+                'activo': True,
+                'medico_ids': [self.medico.id],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        especialidad_id = create_response.data['id']
+        especialidad = Especialidad.objects.get(pk=especialidad_id)
+        self.assertTrue(especialidad.medicos.filter(pk=self.medico.id).exists())
+
+        # Verificar que la API devuelve la especialidad con el médico asignado.
+        detail_response = self.client.get(reverse('especialidad-detail', args=[especialidad_id]))
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data['nombre'], 'Reumatologia')
+        self.assertEqual(len(detail_response.data['medicos']), 1)
+        self.assertEqual(detail_response.data['medicos'][0]['id'], self.medico.id)
+
+        # Luego el paciente crea una cita con ese médico y especialidad.
+        self.client.force_authenticate(user=self.paciente_user)
+        appointment_payload = self._payload(especialidad=especialidad_id)
+        appointment_response = self.client.post(self.url, appointment_payload, format='json')
+
+        self.assertEqual(appointment_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(appointment_response.data['status'], 'success')
+        self.assertEqual(appointment_response.data['data']['especialidad'], especialidad_id)
+        self.assertEqual(appointment_response.data['data']['medico'], self.medico.id)
+
+        cita = Cita.objects.get(pk=appointment_response.data['data']['id'])
+        self.assertTrue(cita.medico.especialidades.filter(pk=especialidad_id).exists())
+        self.assertEqual(cita.especialidad.id, especialidad_id)
+        self.assertEqual(cita.paciente.id, self.paciente.id)
 
     def test_crea_cita_exitosa_y_encola_notificacion(self):
         with self.captureOnCommitCallbacks(execute=True):
