@@ -45,8 +45,7 @@ class Especialidad(models.Model):
     capacidad_diaria = models.PositiveIntegerField(default=50)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
-    capacidad_diaria = models.PositiveIntegerField(default=50)
-     
+
     dias_entre_citas = models.PositiveIntegerField(
         default=7,
         help_text="Cantidad mínima de días entre citas de la misma especialidad para un paciente."
@@ -99,6 +98,10 @@ class Cita(models.Model):
     motivo = models.TextField(blank=True, null=True)
     tipo_cita = models.CharField(max_length=30, default='consulta_general')
     notificacion_encolada = models.BooleanField(default=False)
+    recordatorio_enviado = models.BooleanField(
+        default=False,
+        help_text="Indica si ya se encoló el recordatorio de 24h para esta cita."
+    )
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
 
@@ -185,6 +188,9 @@ class NotificacionPendiente(models.Model):
 
     TIPO_CHOICES = [
         ('confirmacion_cita', 'Confirmación de cita'),
+        ('cancelacion_cita', 'Cancelación de cita'),
+        ('reprogramacion_cita', 'Reprogramación de cita'),
+        ('recordatorio_cita', 'Recordatorio de cita (24h)'),
     ]
     ESTADO_CHOICES = [
         ('pendiente', 'Pendiente'),

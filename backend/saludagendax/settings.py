@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,10 +21,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*37=ctat%5_izw%7@(1uxma!2i20fma(bd)nn#k8o9u8qz7bi8'
+SECRET_KEY = config(
+    'SECRET_KEY',
+    default='django-insecure-*37=ctat%5_izw%7@(1uxma!2i20fma(bd)nn#k8o9u8qz7bi8',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = []
 
@@ -120,13 +124,18 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 # Configuración de emails
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'samuel.banguero@correounivalle.edu.co'
-EMAIL_HOST_PASSWORD = 'reahnsousjsovqga'
-DEFAULT_FROM_EMAIL = 'samuel.banguero@correounivalle.edu.co'
+# IMPORTANTE: las credenciales reales viven en un archivo .env (no versionado),
+# nunca en este archivo. Ver backend/.env.example para la plantilla.
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend',  # seguro por defecto: imprime en consola
+)
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
 
 
 # REST Framework Configuration
