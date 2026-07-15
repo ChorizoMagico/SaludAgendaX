@@ -440,8 +440,14 @@ class CitaViewSet(ModelViewSet):
                 message='Capacidad máxima alcanzada'
             )
 
-
-        return super().create(request, *args, **kwargs)
+        response = super().create(request, *args, **kwargs)
+        return Response(
+            {
+                'status': 'success',
+                'data': response.data,
+            },
+            status=response.status_code,
+        )
 
 class DashboardMetricsView(APIView):
     # Solo administrativos/superadmin accede

@@ -175,7 +175,7 @@ class CitaService:
 
             if citas_paciente_especialidad.exists():
                 add_error(
-                    'frecuencia',
+                    'paciente',
                     f'Solo puede agendar una cita de {especialidad.nombre} cada '
                     f'{especialidad.dias_entre_citas} días.'
                 )

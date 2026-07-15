@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, time
-from .models import HorarioMedico, Cita, ExcepcionMedico
+from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario
 
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
