@@ -45,6 +45,12 @@ class Especialidad(models.Model):
     capacidad_diaria = models.PositiveIntegerField(default=50)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    capacidad_diaria = models.PositiveIntegerField(default=50)
+     
+    dias_entre_citas = models.PositiveIntegerField(
+        default=7,
+        help_text="Cantidad mínima de días entre citas de la misma especialidad para un paciente."
+    )
 
     class Meta:
         db_table = 'especialidad'

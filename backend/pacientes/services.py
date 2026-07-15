@@ -24,7 +24,6 @@ class CitaService:
     MIN_DURACION_MINUTOS = 15
     MAX_DURACION_MINUTOS = 120
     MAX_CANCELACIONES_30_DIAS = 3
-    MAX_CITAS_PACIENTE_ESPECIALIDAD_PERIODO = 4
 
     @classmethod
     def validate_payload(cls, attrs, lock=False):
@@ -150,26 +149,28 @@ class CitaService:
             if citas_especialidad.count() >= especialidad.capacidad_diaria:
                 add_error('especialidad', 'La especialidad ya alcanzó su capacidad diaria.')
 
+        
         if paciente and especialidad and fecha:
-            inicio_periodo = fecha.replace(day=1)
-            if fecha.month == 12:
-                fin_periodo = fecha.replace(year=fecha.year + 1, month=1, day=1)
-            else:
-                fin_periodo = fecha.replace(month=fecha.month + 1, day=1)
+            fecha_minima = fecha - timedelta(days=especialidad.dias_entre_citas)
+            fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
 
             citas_paciente_especialidad = Cita.objects.filter(
                 paciente=paciente,
                 especialidad=especialidad,
-                fecha__gte=inicio_periodo,
-                fecha__lt=fin_periodo,
+                fecha__gt=fecha_minima,
+                fecha__lt=fecha_maxima,
             ).exclude(estado='CANCELADA')
+
             if lock:
                 citas_paciente_especialidad = citas_paciente_especialidad.select_for_update()
-            if citas_paciente_especialidad.count() >= cls.MAX_CITAS_PACIENTE_ESPECIALIDAD_PERIODO:
+
+            if citas_paciente_especialidad.exists():
                 add_error(
-                    'paciente',
-                    'El paciente excede la frecuencia permitida para la especialidad en el período.',
+                    'frecuencia',
+                    f'Solo puede agendar una cita de {especialidad.nombre} cada '
+                    f'{especialidad.dias_entre_citas} días.'
                 )
+
 
         if eps and fecha:
             tope = TopeEPS.objects.filter(eps=eps).first()
