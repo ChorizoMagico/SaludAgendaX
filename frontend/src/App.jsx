@@ -8,13 +8,8 @@ import ForgotPassword from "./pages/auth/ForgotPassword";
 import ResetPassword from "./pages/auth/ResetPassword";
 import PacienteDashboard from "./pages/paciente/PacienteDashboard";
 import MiAgenda from "./pages/medico/MedicoAgenda";
-// import AdminDashboard from "./pages/admin/AdminDashboard";
-
-// Descomentar a medida que se vayan creando las páginas restantes
-
-// import GestionMedicos from "./pages/admin/GestionMedicos";
-// import CalendarioGeneral from "./pages/admin/CalendarioGeneral";
-// import Reportes from "./pages/admin/Reportes";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
 
 function App() {
   return (
@@ -38,13 +33,15 @@ function App() {
             <Route path="/medico/mi-agenda" element={<MiAgenda />} />
           </Route>
 
-          {/* Administrativo + Superadministrador */}
-          {/* <Route element={<ProtectedRoute rolesPermitidos={["administrativo", "superadministrador"]} />}>
+          {/* Administrativo */}
+          <Route element={<ProtectedRoute rolesPermitidos={["administrativo"]} />}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
-            <Route path="/admin/medicos" element={<GestionMedicos />} />
-            <Route path="/admin/calendario" element={<CalendarioGeneral />} />
-            <Route path="/admin/reportes" element={<Reportes />} />
-          </Route> */}
+          </Route>
+
+          {/* Superadministrador */}
+          <Route element={<ProtectedRoute rolesPermitidos={["superadministrador"]} />}>
+            <Route path="/superadmin/dashboard" element={<SuperAdminDashboard />} />
+          </Route>
         </Routes>
       </BrowserRouter>
     </AuthProvider>
