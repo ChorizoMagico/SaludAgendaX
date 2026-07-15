@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, time
-from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario
-from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario
+from .models import HorarioMedico, Cita, ExcepcionMedico
 
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
@@ -25,50 +24,14 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
     horarios_por_dia = {i: [] for i in range(7)}
     for h in horarios_db:
         horarios_por_dia[h.dia_semana].append(h)
-
-    # Bloqueos por franja horaria (permisos parciales, horas extra) del médico.
-    excepciones_horario_db = ExcepcionHorario.objects.filter(
-        medico=medico,
-        fecha__range=[fecha_actual, fecha_limite],
-    )
-    bloqueos_horario_por_dia = {}
-    for ex in excepciones_horario_db:
-        if ex.tipo == 'BLOQUEO':
-            bloqueos_horario_por_dia.setdefault(ex.fecha, []).append((ex.hora_inicio, ex.hora_fin))
-
-    # Bloqueos completos o parciales por permisos/vacaciones (ExcepcionMedico).
-    excepciones_medico_db = ExcepcionMedico.objects.filter(
-        medico=medico,
-        fecha__range=[fecha_actual, fecha_limite],
-        activo=True,
-    )
-    dias_bloqueados = set()
-    bloqueos_medico_por_dia = {}
-    for ex in excepciones_medico_db:
-        if ex.hora_inicio is None and ex.hora_fin is None:
-            dias_bloqueados.add(ex.fecha)
-        else:
-            bloqueos_medico_por_dia.setdefault(ex.fecha, []).append((ex.hora_inicio, ex.hora_fin))
-
-    citas_db = Cita.objects.filter(
-        medico=medico,
-        fecha__range=[fecha_actual, fecha_limite],
-        estado__in=['PENDIENTE', 'CONFIRMADA'],
-    )
-
-    citas_por_slot = {}
-    for cita in citas_db:
-        clave = (cita.fecha, cita.hora_inicio)
-        citas_por_slot[clave] = citas_por_slot.get(clave, 0) + 1
-
-    def _bloqueado_por_rango(bloqueos, hora_slot_inicio, hora_slot_fin):
-        for hora_inicio_bloqueo, hora_fin_bloqueo in bloqueos:
-            if hora_inicio_bloqueo < hora_slot_fin and hora_fin_bloqueo > hora_slot_inicio:
-                return True
-        return False
-
-    while fecha_actual <= fecha_limite:
-        if fecha_actual in dias_bloqueados:
+        
+        # Verificar si hay excepción (día libre, cerrado, etc)
+        excepcion = ExcepcionMedico.objects.filter(
+            medico=medico,
+            fecha=fecha_actual
+        ).first()
+        
+        if excepcion and not excepcion.disponible:
             fecha_actual += timedelta(days=1)
             continue
 
