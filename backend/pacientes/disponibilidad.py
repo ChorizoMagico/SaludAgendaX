@@ -4,6 +4,7 @@ from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
     Calcula los slots disponibles para un médico en un rango de fechas. Optimizado.
+    Calcula los slots disponibles para un médico en un rango de fechas. Optimizado.
     
     Args:
         medico: instancia de Medico
@@ -25,13 +26,27 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
     for h in horarios_db:
         horarios_por_dia[h.dia_semana].append(h)
         
-        # Verificar si hay excepción (día libre, cerrado, etc)
-        excepcion = ExcepcionMedico.objects.filter(
-            medico=medico,
-            fecha=fecha_actual
-        ).first()
-        
-        if excepcion and excepcion.tipo == 'BLOQUEO':
+    
+    excepciones_db = ExcepcionHorario.objects.filter(
+        medico=medico,
+        fecha__range=[fecha_actual, fecha_limite],
+        tipo='BLOQUEO'
+    )
+    
+    dias_bloqueados = {ex.fecha for ex in excepciones_db} 
+    
+    
+    citas_db = Cita.objects.filter(
+        medico=medico,
+        fecha__range=[fecha_actual, fecha_limite],
+        estado__in=['PENDIENTE', 'CONFIRMADA']
+    )
+    
+    citas_ocupadas = {cita.fecha_hora for cita in citas_db} 
+    
+    
+    while fecha_actual <= fecha_limite:
+        if fecha_actual in dias_bloqueados:
             fecha_actual += timedelta(days=1)
             continue
             
@@ -45,23 +60,20 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
             while hora_actual_dt + timedelta(minutes=duracion_minutos) <= hora_fin_dt:
                 
                 if hora_actual_dt not in citas_ocupadas:
+            while hora_actual_dt + timedelta(minutes=duracion_minutos) <= hora_fin_dt:
+                
+                if hora_actual_dt not in citas_ocupadas:
                     slots.append({
+                        'fecha_hora': hora_actual_dt.isoformat(),
                         'fecha_hora': hora_actual_dt.isoformat(),
                         'disponible': True
                     })
                 hora_actual_dt += timedelta(minutes=duracion_minutos)
                 
+                hora_actual_dt += timedelta(minutes=duracion_minutos)
+                
         fecha_actual += timedelta(days=1)
         
-    return slots
-
-def esta_disponible(medico, fecha, hora_inicio, hora_fin):
-    # 1. Verificar excepciones (Prioridad máxima)
-    excepcion = ExcepcionHorario.objects.filter(
-        medico=medico, fecha=fecha, 
-        hora_inicio__lte=hora_inicio, hora_fin__gte=hora_fin
-    ).first()
-    
     return slots
 
 def esta_disponible(medico, fecha, hora_inicio, hora_fin):

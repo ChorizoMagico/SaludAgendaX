@@ -201,6 +201,13 @@ class NotificacionPendiente(models.Model):
 
     class Meta:
         db_table = 'notificacion_pendiente'
+        indexes = [
+            models.Index(
+                fields=['estado'], 
+                name='notif_pendiente_idx',
+                condition=models.Q(estado='pendiente') # Índice parcial para optimización
+            )
+        ]
 
 
 class ExcepcionHorario(models.Model):
