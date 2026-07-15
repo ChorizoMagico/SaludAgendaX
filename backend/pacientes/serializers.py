@@ -325,4 +325,20 @@ class CitaSerializer(serializers.ModelSerializer):
         cita, alerts = CitaService.create_cita(validated_data)
         self.context['alerts'] = alerts
         return cita
-    
+
+class AgendaMedicoSerializer(serializers.ModelSerializer):
+    medico_nombre = serializers.CharField(source="medico.usuario.get_full_name", read_only=True)
+    especialidad_nombre = serializers.CharField(source="especialidad.nombre", read_only=True)
+
+    class Meta:
+        model = Cita
+        fields = [
+            "id",
+            "fecha",
+            "hora_inicio",
+            "hora_fin",
+            "estado",
+            "motivo",
+            "medico_nombre",
+            "especialidad_nombre",
+        ]
