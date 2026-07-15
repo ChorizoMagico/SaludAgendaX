@@ -26,7 +26,12 @@ class CitaService:
     MAX_CANCELACIONES_30_DIAS = 3
 
     @classmethod
-    def validate_payload(cls, attrs, lock=False):
+    def validate_payload(cls, attrs, lock=False, exclude_cita_id=None):
+        """Valida las reglas de negocio de una cita.
+
+        exclude_cita_id: al reprogramar una cita existente, se excluye su propio
+        id de todas las búsquedas de conflicto para que no choque consigo misma.
+        """
         errors = {}
         alerts = []
 
@@ -40,6 +45,11 @@ class CitaService:
 
         def add_error(field, message):
             errors.setdefault(field, []).append(message)
+
+        def _excluir_propia(queryset):
+            if exclude_cita_id:
+                return queryset.exclude(pk=exclude_cita_id)
+            return queryset
 
         today = timezone.localdate()
         if fecha and fecha < today:
@@ -94,11 +104,11 @@ class CitaService:
                 add_error('medico', 'El médico no está disponible en el horario seleccionado.')
             else:
                 max_citas_por_hora = max(horarios.values_list('max_citas_por_hora', flat=True))
-                citas_hora = Cita.objects.filter(
+                citas_hora = _excluir_propia(Cita.objects.filter(
                     medico=medico,
                     fecha=fecha,
                     hora_inicio__hour=hora_inicio.hour,
-                ).exclude(estado='CANCELADA')
+                ).exclude(estado='CANCELADA'))
                 if lock:
                     citas_hora = citas_hora.select_for_update()
                 if citas_hora.count() >= max_citas_por_hora:
@@ -114,14 +124,16 @@ class CitaService:
             elif excepciones.filter(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio).exists():
                 add_error('medico', 'El médico tiene una excepción de disponibilidad para este horario.')
 
-            citas_medico = Cita.objects.filter(medico=medico, fecha=fecha).exclude(estado='CANCELADA')
+            citas_medico = _excluir_propia(Cita.objects.filter(medico=medico, fecha=fecha).exclude(estado='CANCELADA'))
             if lock:
                 citas_medico = citas_medico.select_for_update()
             if citas_medico.filter(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio).exists():
                 add_error('medico', 'El médico ya tiene una cita agendada en el horario seleccionado.')
 
             if paciente:
-                citas_paciente = Cita.objects.filter(paciente=paciente, fecha=fecha).exclude(estado='CANCELADA')
+                citas_paciente = _excluir_propia(
+                    Cita.objects.filter(paciente=paciente, fecha=fecha).exclude(estado='CANCELADA')
+                )
                 if lock:
                     citas_paciente = citas_paciente.select_for_update()
                 if citas_paciente.filter(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio).exists():
@@ -140,10 +152,10 @@ class CitaService:
                     )
 
         if especialidad and fecha:
-            citas_especialidad = Cita.objects.filter(
+            citas_especialidad = _excluir_propia(Cita.objects.filter(
                 especialidad=especialidad,
                 fecha=fecha,
-            ).exclude(estado='CANCELADA')
+            ).exclude(estado='CANCELADA'))
             if lock:
                 citas_especialidad = citas_especialidad.select_for_update()
             if citas_especialidad.count() >= especialidad.capacidad_diaria:
@@ -154,19 +166,19 @@ class CitaService:
             fecha_minima = fecha - timedelta(days=especialidad.dias_entre_citas)
             fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
 
-            citas_paciente_especialidad = Cita.objects.filter(
+            citas_paciente_especialidad = _excluir_propia(Cita.objects.filter(
                 paciente=paciente,
                 especialidad=especialidad,
                 fecha__gt=fecha_minima,
                 fecha__lt=fecha_maxima,
-            ).exclude(estado='CANCELADA')
+            ).exclude(estado='CANCELADA'))
 
             if lock:
                 citas_paciente_especialidad = citas_paciente_especialidad.select_for_update()
 
             if citas_paciente_especialidad.exists():
                 add_error(
-                    'frecuencia',
+                    'paciente',
                     f'Solo puede agendar una cita de {especialidad.nombre} cada '
                     f'{especialidad.dias_entre_citas} días.'
                 )
@@ -185,11 +197,11 @@ class CitaService:
                     else:
                         fin_periodo = fecha.replace(month=fecha.month + 1, day=1)
 
-                citas_eps = Cita.objects.filter(
+                citas_eps = _excluir_propia(Cita.objects.filter(
                     eps=eps,
                     fecha__gte=inicio_periodo,
                     fecha__lt=fin_periodo,
-                ).exclude(estado='CANCELADA')
+                ).exclude(estado='CANCELADA'))
                 if lock:
                     citas_eps = citas_eps.select_for_update()
                 citas_eps_count = citas_eps.count()
@@ -249,3 +261,85 @@ class CitaService:
             },
         )
         Cita.objects.filter(pk=cita_id).update(notificacion_encolada=True)
+
+    @classmethod
+    def enqueue_cancelacion_notification(cls, cita_id):
+        cita = Cita.objects.select_related('paciente__usuario', 'medico__usuario').get(pk=cita_id)
+        NotificacionPendiente.objects.create(
+            tipo='cancelacion_cita',
+            cita=cita,
+            payload={
+                'email_paciente': cita.paciente.usuario.email,
+                'medico_id': cita.medico_id,
+                'fecha': cita.fecha.isoformat() if cita.fecha else None,
+                'hora_inicio': cita.hora_inicio.isoformat() if cita.hora_inicio else None,
+                'motivo': cita.motivo,
+            },
+        )
+
+    @classmethod
+    def enqueue_reprogramacion_notification(cls, cita_id, fecha_anterior, hora_inicio_anterior):
+        cita = Cita.objects.select_related('paciente__usuario', 'medico__usuario').get(pk=cita_id)
+        NotificacionPendiente.objects.create(
+            tipo='reprogramacion_cita',
+            cita=cita,
+            payload={
+                'email_paciente': cita.paciente.usuario.email,
+                'medico_id': cita.medico_id,
+                'fecha_anterior': fecha_anterior.isoformat() if fecha_anterior else None,
+                'hora_inicio_anterior': hora_inicio_anterior.isoformat() if hora_inicio_anterior else None,
+                'fecha_nueva': cita.fecha.isoformat() if cita.fecha else None,
+                'hora_inicio_nueva': cita.hora_inicio.isoformat() if cita.hora_inicio else None,
+            },
+        )
+
+    @classmethod
+    def reprogramar_cita(cls, cita, nueva_fecha, nueva_hora_inicio, nueva_hora_fin):
+        """Reprograma una cita existente validando disponibilidad de la nueva franja.
+
+        HU-013: valida contra las mismas reglas de negocio que la creación de citas,
+        excluyendo la propia cita de los chequeos de conflicto (de lo contrario
+        chocaría consigo misma).
+        """
+        if cita.estado == 'CANCELADA':
+            raise serializers.ValidationError(
+                {'estado': ['No se puede reprogramar una cita cancelada.']}
+            )
+
+        with transaction.atomic():
+            cita_bloqueada = Cita.objects.select_for_update().get(pk=cita.pk)
+
+            attrs = {
+                'paciente': cita_bloqueada.paciente,
+                'medico': cita_bloqueada.medico,
+                'especialidad': cita_bloqueada.especialidad,
+                'eps': cita_bloqueada.eps,
+                'fecha': nueva_fecha,
+                'hora_inicio': nueva_hora_inicio,
+                'hora_fin': nueva_hora_fin,
+            }
+
+            errors, alerts = cls.validate_payload(attrs, lock=True, exclude_cita_id=cita_bloqueada.pk)
+            if errors:
+                raise serializers.ValidationError(errors)
+
+            fecha_anterior = cita_bloqueada.fecha
+            hora_inicio_anterior = cita_bloqueada.hora_inicio
+
+            nueva_fecha_hora = timezone.make_aware(datetime.combine(nueva_fecha, nueva_hora_inicio))
+            cita_bloqueada.fecha = nueva_fecha
+            cita_bloqueada.hora_inicio = nueva_hora_inicio
+            cita_bloqueada.hora_fin = nueva_hora_fin
+            cita_bloqueada.fecha_hora = nueva_fecha_hora
+            cita_bloqueada.recordatorio_enviado = False
+            cita_bloqueada.save(update_fields=[
+                'fecha', 'hora_inicio', 'hora_fin', 'fecha_hora', 'recordatorio_enviado', 'actualizado_en'
+            ])
+
+            transaction.on_commit(
+                lambda: cls.enqueue_reprogramacion_notification(
+                    cita_bloqueada.id, fecha_anterior, hora_inicio_anterior
+                )
+            )
+
+            return cita_bloqueada, alerts
