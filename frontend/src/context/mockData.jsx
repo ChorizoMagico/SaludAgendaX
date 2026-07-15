@@ -1,11 +1,10 @@
-// src/shared/mockData.js
 // ─────────────────────────────────────────────────────────────────────────
 // Fuente única de datos simulados para toda la app (auth + dashboards).
 // Cuando exista backend, este archivo desaparece y cada dominio consulta su
 // propio endpoint (usuarios, citas, catálogos) vía Axios. Mientras tanto,
-// AuthContext y los dashboards de paciente/médico/administrativo importan
-// todo desde aquí para no tener listas de "usuarios de mentira"
-// desincronizadas entre sí.
+// AuthContext y los dashboards de paciente/médico/administrativo/
+// superadministrador importan todo desde aquí para no tener listas de
+// "usuarios de mentira" desincronizadas entre sí.
 // ─────────────────────────────────────────────────────────────────────────
 
 let excepciones = [];
@@ -104,6 +103,13 @@ export function eliminarSede(nombre) {
 // ---------- Usuarios ----------
 // `let`, no `const`: mockRegister/agregarUsuarioMock/registrarMedico/
 // registrarPaciente le agregan cuentas nuevas mientras se prueba sin backend.
+//
+// Campo `estado` (solo médico/administrativo): "pendiente" | "aprobado" | "rechazado".
+// Las cuentas de paciente no pasan por este flujo (se activan solas al registrarse).
+// Las cuentas médico/administrativo creadas directamente por un admin (registrarMedico)
+// nacen "aprobado"; las que llegan por autorregistro nacen "pendiente" y quedan
+// bloqueadas (activo=false) hasta que un superadministrador las revise
+// (flujo 1.1 extendido / pantalla "Solicitudes de registro").
 export let MOCK_USERS = [
   {
     cedula: "1000000001",
@@ -146,6 +152,7 @@ export let MOCK_USERS = [
       titulo: "Especialista en Cardiología",
       horario: clonarHorarioBase(),
       activo: true,
+      estado: "aprobado",
     },
   },
   {
@@ -163,6 +170,7 @@ export let MOCK_USERS = [
       titulo: "Médica general, especialista en Pediatría",
       horario: clonarHorarioBase(),
       activo: true,
+      estado: "aprobado",
     },
   },
   {
@@ -180,6 +188,7 @@ export let MOCK_USERS = [
       titulo: "Especialista en Dermatología",
       horario: clonarHorarioBase(),
       activo: true,
+      estado: "aprobado",
     },
   },
   {
@@ -190,6 +199,7 @@ export let MOCK_USERS = [
       nombre: "Laura", apellido: "Gómez",
       correo: "laura.admin@saludagendax.com",
       activo: true,
+      estado: "aprobado",
     },
   },
   {
@@ -202,15 +212,65 @@ export let MOCK_USERS = [
       activo: true,
     },
   },
+  // ---- Solicitudes pendientes de aprobación (flujo de superadministrador) ----
+  {
+    cedula: "1000000008",
+    password: "medico123",
+    user: {
+      id: 8, rol: "medico",
+      nombre: "Julián", apellido: "Restrepo",
+      correo: "julian.restrepo@saludagendax.com",
+      telefono: "3134445566",
+      direccion: "Calle 44 # 6-12, Cali",
+      especialidades: ["Neurología"],
+      sede: "Sede Sur",
+      numeroRegistro: "RM-10031",
+      titulo: "Especialista en Neurología",
+      horario: clonarHorarioBase(),
+      activo: false,
+      estado: "pendiente",
+    },
+  },
+  {
+    cedula: "1000000009",
+    password: "medico123",
+    user: {
+      id: 9, rol: "medico",
+      nombre: "Daniela", apellido: "Ospina",
+      correo: "daniela.ospina@saludagendax.com",
+      telefono: "3145556677",
+      direccion: "Carrera 20 # 14-05, Cali",
+      especialidades: ["Ortopedia", "Medicina general"],
+      sede: "Sede Chipichape",
+      numeroRegistro: "RM-10032",
+      titulo: "Médica general, especialista en Ortopedia",
+      horario: clonarHorarioBase(),
+      activo: false,
+      estado: "pendiente",
+    },
+  },
+  {
+    cedula: "1000000010",
+    password: "admin123",
+    user: {
+      id: 10, rol: "administrativo",
+      nombre: "Felipe", apellido: "Herrera",
+      correo: "felipe.herrera@saludagendax.com",
+      telefono: "3156667788",
+      activo: false,
+      estado: "pendiente",
+    },
+  },
 ];
 
 // ---------- Store reactivo de usuarios ----------
 // Igual que `citasStore` más abajo: permite que cualquier parte de la app
 // que tenga un usuario "en memoria" (por ejemplo, el `user` de AuthContext
-// para la sesión activa) se entere cuando otro rol (el administrador) edita
-// ese mismo usuario — sede, especialidades, horario, activo/inactivo, etc.
-// Sin esto, un médico con sesión abierta no ve cambios que el admin haga
-// sobre su perfil hasta que cierre sesión y vuelva a entrar.
+// para la sesión activa) se entere cuando otro rol (el administrador o el
+// superadministrador) edita ese mismo usuario — sede, especialidades,
+// horario, activo/inactivo, estado de la solicitud, etc. Sin esto, un
+// médico con sesión abierta no ve cambios que el admin haga sobre su
+// perfil hasta que cierre sesión y vuelva a entrar.
 const userListeners = new Set();
 function emitUsuarios() {
   userListeners.forEach((l) => l());
@@ -232,7 +292,8 @@ export function agregarUsuarioMock(nuevo) {
 
 // Usado por "Mi perfil" en los dashboards al guardar cambios, y por el
 // dashboard administrativo al editar especialidades/sede/horario de un
-// médico (flujo 2.1/2.2).
+// médico (flujo 2.1/2.2), y por el superadministrador al aprobar/rechazar
+// solicitudes (ver aprobarSolicitud/rechazarSolicitud más abajo).
 export function actualizarUsuarioMock(id, cambios) {
   MOCK_USERS = MOCK_USERS.map((m) =>
     m.user.id === id ? { ...m, user: { ...m.user, ...cambios } } : m
@@ -257,11 +318,65 @@ export function toggleActivoUsuario(id) {
   return MOCK_USERS.find((m) => m.user.id === id)?.user;
 }
 
+// ---------- Solicitudes de registro (Superadministrador) ----------
+// Cuentas de médico/administrativo creadas por autorregistro nacen con
+// estado "pendiente" y activo=false. El superadministrador las revisa desde
+// el dashboard ("Solicitudes de registro") y las aprueba o rechaza.
+
+// Cacheado por referencia de MOCK_USERS: esta función se usa como getSnapshot
+// de useSyncExternalStore en SolicitudesPendientes.jsx, y ese hook exige que
+// getSnapshot devuelva la MISMA referencia si nada cambió — si no, React entra
+// en un loop de "getSnapshot cambió -> re-render -> getSnapshot cambió -> ...".
+// Como .filter().map() siempre crea un array nuevo, cacheamos el resultado y
+// solo recalculamos cuando MOCK_USERS fue reasignado de verdad (emitUsuarios).
+let cacheSolicitudes = { usuarios: null, resultado: [] };
+
+export function getSolicitudesPendientes() {
+  if (cacheSolicitudes.usuarios === MOCK_USERS) return cacheSolicitudes.resultado;
+
+  const resultado = MOCK_USERS.filter(
+    (m) => (m.user.rol === "medico" || m.user.rol === "administrativo") && m.user.estado === "pendiente"
+  ).map((m) => ({
+    id: m.user.id,
+    rol: m.user.rol,
+    nombre: m.user.nombre,
+    apellido: m.user.apellido,
+    correo: m.user.correo,
+    cedula: m.cedula,
+    telefono: m.user.telefono,
+    especialidades: m.user.especialidades,
+    numeroRegistro: m.user.numeroRegistro,
+    sede: m.user.sede,
+  }));
+
+  cacheSolicitudes = { usuarios: MOCK_USERS, resultado };
+  return resultado;
+}
+
+export function aprobarSolicitud(id) {
+  const registro = MOCK_USERS.find((m) => m.user.id === id);
+  if (!registro || registro.user.estado !== "pendiente") {
+    return { ok: false, mensaje: "Esa solicitud ya no está pendiente." };
+  }
+  actualizarUsuarioMock(id, { estado: "aprobado", activo: true });
+  return { ok: true };
+}
+
+export function rechazarSolicitud(id, motivo) {
+  const registro = MOCK_USERS.find((m) => m.user.id === id);
+  if (!registro || registro.user.estado !== "pendiente") {
+    return { ok: false, mensaje: "Esa solicitud ya no está pendiente." };
+  }
+  actualizarUsuarioMock(id, { estado: "rechazado", activo: false, motivoRechazo: motivo || null });
+  return { ok: true };
+}
+
 // ---------- Registro de médicos (flujo 2.1) ----------
 // El admin crea el usuario + datos profesionales + especialidades + sede en
 // un solo paso. Si no se pasa un horario explícito, el médico arranca con
 // una copia de HORARIO_BASE, editable después desde su tarjeta en el
-// dashboard administrativo.
+// dashboard administrativo. A diferencia del autorregistro, esta vía queda
+// "aprobado" de una vez (fue el propio admin quien la creó).
 export function registrarMedico({
   cedula,
   password,
@@ -294,6 +409,7 @@ export function registrarMedico({
       titulo,
       horario: horario || clonarHorarioBase(),
       activo: true,
+      estado: "aprobado",
     },
   };
   MOCK_USERS = [...MOCK_USERS, nuevo];
@@ -474,6 +590,14 @@ export function getMedicoPorId(id) {
   return getMedicos().find((m) => m.id === id);
 }
 
+export function getMedicosDisponibles() {
+  return getMedicos().filter((m) => m.estado === "aprobado" && m.activo !== false);
+}
+
+export function getMedicosGestionables() {
+  return getMedicos().filter((m) => m.estado === "aprobado");
+}
+
 export function getPacientePorId(id) {
   return getPacientes().find((p) => p.id === id);
 }
@@ -569,3 +693,307 @@ export const citasStore = {
     emit();
   },
 };
+
+// ---------- Reglas de negocio (Superadministrador) ----------
+// A partir de aquí: topes de citas por EPS (flujo 6.1) y restricciones de
+// frecuencia por especialidad (flujo 6.2). El "uso" de un tope se calcula
+// en caliente contra `citasStore`, en vez de guardarse como un contador
+// aparte (uso_tope_eps): así nunca se desincroniza si una cita se cancela,
+// reprograma o se crea desde cualquier dashboard.
+
+function inicioSemana(fecha) {
+  const d = new Date(fecha);
+  const dia = d.getDay(); // 0 = domingo … 6 = sábado
+  const diferencia = (dia === 0 ? -6 : 1) - dia; // retrocede hasta el lunes
+  d.setDate(d.getDate() + diferencia);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function finSemana(fecha) {
+  const inicio = inicioSemana(fecha);
+  const fin = new Date(inicio);
+  fin.setDate(fin.getDate() + 6);
+  fin.setHours(23, 59, 59, 999);
+  return fin;
+}
+
+function inicioMes(fecha) {
+  const d = new Date(fecha);
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function finMes(fecha) {
+  const d = new Date(fecha);
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function rangoPeriodoActual(periodo) {
+  const ahora = new Date();
+  return periodo === "semanal"
+    ? { inicio: inicioSemana(ahora), fin: finSemana(ahora) }
+    : { inicio: inicioMes(ahora), fin: finMes(ahora) };
+}
+
+// Citas que cuentan contra un tope: no canceladas, de la EPS del tope, de
+// la especialidad del tope (o cualquiera, si especialidad es null = "todas"),
+// y con fecha dentro del período actual (semana o mes en curso).
+// `excluirCitaId` permite no contar la propia cita que se está reprogramando
+// (si no se excluyera, se contaría dos veces: como cita vieja y como nueva).
+function citasQueCuentanParaTope(tope, excluirCitaId) {
+  const { inicio, fin } = rangoPeriodoActual(tope.periodo);
+  return citasStore.getSnapshot().filter((c) => {
+    if (c.id === excluirCitaId) return false;
+    if (c.estado === "cancelada") return false;
+    if (tope.especialidad && c.especialidad !== tope.especialidad) return false;
+    const paciente = getPacientePorId(c.pacienteId);
+    if (!paciente || paciente.eps !== tope.eps) return false;
+    const fechaCita = new Date(`${c.fecha}T00:00:00`);
+    return fechaCita >= inicio && fechaCita <= fin;
+  });
+}
+
+// Devuelve el uso actual de un tope: citas usadas / máximo, y — si el tope
+// tiene costo por cita y presupuesto — el gasto estimado / presupuesto.
+// `porcentaje` es el mayor entre ambos, para poder alertar por cualquiera
+// de los dos criterios (flujo 6.3: alerta cuando uso ≥ 80%).
+// `excluirCitaId` (opcional): ver citasQueCuentanParaTope.
+export function getUsoTope(tope, excluirCitaId) {
+  const usadas = citasQueCuentanParaTope(tope, excluirCitaId).length;
+  const gastado = tope.costoPorCita != null ? usadas * tope.costoPorCita : null;
+  const porcentajeCitas = tope.maxCitas ? Math.round((usadas / tope.maxCitas) * 100) : 0;
+  const porcentajePresupuesto =
+    tope.presupuestoMax && gastado != null ? Math.round((gastado / tope.presupuestoMax) * 100) : 0;
+
+  return {
+    usadas,
+    gastado,
+    porcentajeCitas,
+    porcentajePresupuesto,
+    porcentaje: Math.max(porcentajeCitas, porcentajePresupuesto),
+  };
+}
+
+let topesEps = [
+  { id: 1, eps: "Nueva EPS", especialidad: null, periodo: "mensual", maxCitas: 40, presupuestoMax: 6000000, costoPorCita: 45000, activo: true },
+  { id: 2, eps: "Sura EPS", especialidad: "Cardiología", periodo: "semanal", maxCitas: 5, presupuestoMax: null, costoPorCita: null, activo: true },
+  { id: 3, eps: "Compensar", especialidad: "Medicina general", periodo: "mensual", maxCitas: 8, presupuestoMax: null, costoPorCita: null, activo: true },
+];
+
+const topesEpsListeners = new Set();
+function emitTopesEps() {
+  topesEpsListeners.forEach((l) => l());
+}
+
+export const topesEpsStore = {
+  subscribe(listener) {
+    topesEpsListeners.add(listener);
+    return () => topesEpsListeners.delete(listener);
+  },
+  getSnapshot() {
+    return topesEps;
+  },
+  // especialidad: null/"" = aplica a todas las especialidades
+  agregar({ eps, especialidad, periodo, maxCitas, presupuestoMax, costoPorCita }) {
+    const especialidadNormalizada = especialidad || null;
+    const duplicado = topesEps.some(
+      (t) => t.activo && t.eps === eps && t.periodo === periodo && (t.especialidad || null) === especialidadNormalizada
+    );
+    if (duplicado) {
+      return { ok: false, mensaje: "Ya existe un tope activo para esa EPS, especialidad y período." };
+    }
+    const nuevoId = topesEps.reduce((max, t) => Math.max(max, t.id), 0) + 1;
+    topesEps = [
+      ...topesEps,
+      {
+        id: nuevoId,
+        eps,
+        especialidad: especialidadNormalizada,
+        periodo,
+        maxCitas: Number(maxCitas),
+        presupuestoMax: presupuestoMax ? Number(presupuestoMax) : null,
+        costoPorCita: costoPorCita ? Number(costoPorCita) : null,
+        activo: true,
+      },
+    ];
+    emitTopesEps();
+    return { ok: true };
+  },
+  actualizar(id, cambios) {
+    topesEps = topesEps.map((t) => (t.id === id ? { ...t, ...cambios } : t));
+    emitTopesEps();
+  },
+  toggleActivo(id) {
+    topesEps = topesEps.map((t) => (t.id === id ? { ...t, activo: !t.activo } : t));
+    emitTopesEps();
+  },
+  eliminar(id) {
+    topesEps = topesEps.filter((t) => t.id !== id);
+    emitTopesEps();
+  },
+};
+
+// Topes con uso ≥ 80% en el período actual (flujo 6.3: Monitorear alertas
+// de topes), ordenados de más crítico a menos crítico.
+export function getAlertasTopes() {
+  return topesEps
+    .filter((t) => t.activo)
+    .map((t) => ({ ...t, uso: getUsoTope(t) }))
+    .filter((t) => t.uso.porcentaje >= 80)
+    .sort((a, b) => b.uso.porcentaje - a.uso.porcentaje);
+}
+
+// ---------- Alertas de topes revisadas ----------
+let alertasRevisadas = {};
+
+const alertasRevisadasListeners = new Set();
+function emitAlertasRevisadas() {
+  alertasRevisadasListeners.forEach((l) => l());
+}
+
+export const alertasRevisadasStore = {
+  subscribe(listener) {
+    alertasRevisadasListeners.add(listener);
+    return () => alertasRevisadasListeners.delete(listener);
+  },
+  getSnapshot() {
+    return alertasRevisadas;
+  },
+  marcar(topeId, porcentajeActual) {
+    alertasRevisadas = { ...alertasRevisadas, [topeId]: porcentajeActual };
+    emitAlertasRevisadas();
+  },
+};
+
+// ¿Esta alerta ya fue revisada y el uso no ha empeorado desde entonces?
+export function alertaFueRevisada(topeId, porcentajeActual, revisadas) {
+  const revisadoEn = revisadas[topeId];
+  return revisadoEn != null && porcentajeActual <= revisadoEn;
+}
+
+// ---------- Validaciones compartidas al agendar una cita ----------
+
+// ¿El paciente ya tiene otra cita activa (agendada o reprogramada) en esa
+// misma fecha y hora, sin importar con qué médico? `excluirCitaId` se usa
+// al reprogramar, para no comparar la cita consigo misma.
+export function pacienteTieneChoqueDeHorario(pacienteId, fecha, hora, excluirCitaId) {
+  return citasStore.getSnapshot().some(
+    (c) =>
+      c.pacienteId === pacienteId &&
+      c.fecha === fecha &&
+      c.hora === hora &&
+      (c.estado === "agendada" || c.estado === "reprogramada") &&
+      c.id !== excluirCitaId
+  );
+}
+
+// ¿Agendar esta cita haría que algún tope activo de la EPS del paciente se
+// exceda? Revisa tanto el tope específico de esa especialidad como el tope
+// "todas las especialidades" (especialidad: null), ya que ambos podrían
+// aplicar a la vez. `excluirCitaId` evita contar dos veces la cita que se
+// está reprogramando.
+export function topeEpsExcedido(pacienteId, especialidad, excluirCitaId) {
+  const paciente = getPacientePorId(pacienteId);
+  if (!paciente) return { excedido: false };
+
+  const topesAplicables = topesEps.filter(
+    (t) => t.activo && t.eps === paciente.eps && (t.especialidad === null || t.especialidad === especialidad)
+  );
+
+  for (const tope of topesAplicables) {
+    const uso = getUsoTope(tope, excluirCitaId);
+    const citasTrasAgendar = uso.usadas + 1;
+    const gastoTrasAgendar = tope.costoPorCita != null ? citasTrasAgendar * tope.costoPorCita : null;
+
+    const excedeCitas = tope.maxCitas != null && citasTrasAgendar > tope.maxCitas;
+    const excedePresupuesto =
+      tope.presupuestoMax != null && gastoTrasAgendar != null && gastoTrasAgendar > tope.presupuestoMax;
+
+    if (excedeCitas || excedePresupuesto) {
+      return {
+        excedido: true,
+        mensaje: `${paciente.eps} ya alcanzó su tope de citas${
+          tope.especialidad ? ` para ${tope.especialidad}` : ""
+        } este período (${tope.periodo}). No se pueden agendar más citas hasta el próximo período.`,
+      };
+    }
+  }
+
+  return { excedido: false };
+}
+
+let restriccionesFrecuencia = [
+  { id: 1, especialidad: "Cardiología", periodo: "mensual", maxCitasPorPaciente: 2, activo: true },
+  { id: 2, especialidad: "Psicología", periodo: "semanal", maxCitasPorPaciente: 1, activo: true },
+];
+
+const restriccionesListeners = new Set();
+function emitRestricciones() {
+  restriccionesListeners.forEach((l) => l());
+}
+
+export const restriccionesFrecuenciaStore = {
+  subscribe(listener) {
+    restriccionesListeners.add(listener);
+    return () => restriccionesListeners.delete(listener);
+  },
+  getSnapshot() {
+    return restriccionesFrecuencia;
+  },
+  agregar({ especialidad, periodo, maxCitasPorPaciente }) {
+    const duplicado = restriccionesFrecuencia.some(
+      (r) => r.activo && r.especialidad === especialidad && r.periodo === periodo
+    );
+    if (duplicado) {
+      return { ok: false, mensaje: "Ya existe una restricción activa para esa especialidad y período." };
+    }
+    const nuevoId = restriccionesFrecuencia.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+    restriccionesFrecuencia = [
+      ...restriccionesFrecuencia,
+      { id: nuevoId, especialidad, periodo, maxCitasPorPaciente: Number(maxCitasPorPaciente), activo: true },
+    ];
+    emitRestricciones();
+    return { ok: true };
+  },
+  actualizar(id, cambios) {
+    restriccionesFrecuencia = restriccionesFrecuencia.map((r) => (r.id === id ? { ...r, ...cambios } : r));
+    emitRestricciones();
+  },
+  toggleActivo(id) {
+    restriccionesFrecuencia = restriccionesFrecuencia.map((r) => (r.id === id ? { ...r, activo: !r.activo } : r));
+    emitRestricciones();
+  },
+  eliminar(id) {
+    restriccionesFrecuencia = restriccionesFrecuencia.filter((r) => r.id !== id);
+    emitRestricciones();
+  },
+};
+
+// NUEVO — ¿agendar esta cita viola alguna restricción de frecuencia activa
+// para esta especialidad? Cuenta, dentro del período vigente (semana o mes
+// en curso), cuántas citas activas (no canceladas) tiene YA ese paciente
+// con esa especialidad, sin importar el médico. `excluirCitaId` evita que
+// la propia cita que se está reprogramando se cuente dos veces.
+export function restriccionFrecuenciaExcedida(pacienteId, especialidad, excluirCitaId) {
+  const restriccion = restriccionesFrecuencia.find((r) => r.activo && r.especialidad === especialidad);
+  if (!restriccion) return { excedido: false };
+
+  const { inicio, fin } = rangoPeriodoActual(restriccion.periodo);
+  const citasDelPaciente = citasStore.getSnapshot().filter((c) => {
+    if (c.id === excluirCitaId) return false;
+    if (c.estado === "cancelada") return false;
+    if (c.pacienteId !== pacienteId) return false;
+    if (c.especialidad !== especialidad) return false;
+    const fechaCita = new Date(`${c.fecha}T00:00:00`);
+    return fechaCita >= inicio && fechaCita <= fin;
+  });
+
+  if (citasDelPaciente.length + 1 > restriccion.maxCitasPorPaciente) {
+    return {
+      excedido: true,
+      mensaje: `Este paciente ya alcanzó el máximo de ${restriccion.maxCitasPorPaciente} cita(s) de ${especialidad} por período (${restriccion.periodo}).`,
+    };
+  }
+
+  return { excedido: false };
+}

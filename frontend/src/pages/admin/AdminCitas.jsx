@@ -18,11 +18,16 @@ import {
   DURACION_CITA_MIN,
   getMedicos,
   getMedicoPorId,
+  getMedicosDisponibles,
   getPacientesConCedula,
   getPacientePorId,
   citasStore,
   excepcionesStore,
+  pacienteTieneChoqueDeHorario,
+  topeEpsExcedido,
+  restriccionFrecuenciaExcedida,
 } from "../../context/mockData";
+
 import {
   StepTracker,
   OpcionPill,
@@ -740,11 +745,11 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
   }, [busquedaPaciente]);
 
   const sedesConMedico = SEDES.filter((s) =>
-    getMedicos().some((m) => m.especialidades.includes(especialidad) && m.sede === s && m.activo !== false)
+    getMedicosDisponibles().some((m) => m.especialidades.includes(especialidad) && m.sede === s)
   );
 
-  const medicosFiltrados = getMedicos().filter(
-    (m) => m.especialidades.includes(especialidad) && m.sede === sede && m.activo !== false
+  const medicosFiltrados = getMedicosDisponibles().filter(
+    (m) => m.especialidades.includes(especialidad) && m.sede === sede
   );
 
   const franjasOcupadas = new Set(
@@ -812,6 +817,23 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
     }
     if (franjaBloqueadaPorExcepcion(excepcionesDelMedico, fecha, franja)) {
       setMensaje("El médico tiene un bloqueo, feriado o vacaciones en ese horario. Elige otro horario o fecha.");
+      return;
+    }
+
+    if (pacienteTieneChoqueDeHorario(pacienteId, fecha, franja, citaAReprogramar?.id)) {
+      setMensaje("Este paciente ya tiene otra cita agendada en esa misma fecha y hora.");
+      return;
+    }
+
+    const frecuencia = restriccionFrecuenciaExcedida(pacienteId, especialidad, citaAReprogramar?.id);
+    if (frecuencia.excedido) {
+      setMensaje(frecuencia.mensaje);
+      return;
+    }
+
+    const tope = topeEpsExcedido(pacienteId, especialidad, citaAReprogramar?.id);
+    if (tope.excedido) {
+      setMensaje(tope.mensaje);
       return;
     }
 
@@ -888,7 +910,7 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
             type="text"
             value={busquedaPaciente}
             onChange={(e) => setBusquedaPaciente(e.target.value)}
-            placeholder="Ej: 1000000001 o Valeria Restrepo"
+            placeholder="Ej: 1000000001 o Juan Pérez"
             className="border border-[#DCE8E5] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0E9668]"
           />
           {busquedaPaciente.trim() && (
@@ -952,7 +974,7 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
           <div className="flex items-center gap-4 mt-2">
             <BotonContinuar disabled={!especialidad} onClick={() => setPaso(pasoSede)} />
             {!citaAReprogramar && (
-              <button onClick={() => setPaso(1)} className="text-sm text-[#48605C] hover:underline">
+              <button onClick={() => { setMensaje(""); setPaso(1); }} className="text-sm text-[#48605C] hover:underline">
                 ← Cambiar paciente
               </button>
             )}
@@ -986,7 +1008,7 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
           )}
           <div className="flex items-center gap-4 mt-2">
             <BotonContinuar disabled={!sede} onClick={() => setPaso(pasoMedico)} />
-            <button onClick={() => setPaso(pasoEspecialidad)} className="text-sm text-[#48605C] hover:underline">
+            <button onClick={() => { setMensaje(""); setPaso(pasoEspecialidad); }} className="text-sm text-[#48605C] hover:underline">
               ← Cambiar especialidad
             </button>
           </div>
@@ -1020,7 +1042,7 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
           </div>
           <div className="flex items-center gap-4 mt-2">
             <BotonContinuar disabled={!medicoId} onClick={() => setPaso(pasoHorario)} />
-            <button onClick={() => setPaso(pasoSede)} className="text-sm text-[#48605C] hover:underline">
+            <button onClick={() => { setMensaje(""); setPaso(pasoSede); }} className="text-sm text-[#48605C] hover:underline">
               ← Cambiar sede
             </button>
           </div>
@@ -1094,7 +1116,7 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
 
           <div className="flex items-center gap-4 mt-2">
             <BotonContinuar disabled={!fecha || !franja} onClick={() => setPaso(pasoConfirmar)} />
-            <button onClick={() => setPaso(pasoMedico)} className="text-sm text-[#48605C] hover:underline">
+            <button onClick={() => { setMensaje(""); setPaso(pasoMedico); }} className="text-sm text-[#48605C] hover:underline">
               ← Cambiar médico
             </button>
           </div>
@@ -1133,7 +1155,7 @@ function WizardAgendarAdmin({ citaAReprogramar, mantenerMedico, todasLasCitas, o
               <span className="material-symbols-outlined text-lg">check</span>
               {citaAReprogramar ? "Confirmar reprogramación" : "Confirmar cita"}
             </button>
-            <button onClick={() => setPaso(pasoHorario)} className="text-sm text-[#48605C] hover:underline">
+            <button onClick={() => { setMensaje(""); setPaso(pasoHorario); }} className="text-sm text-[#48605C] hover:underline">
               ← Volver y editar
             </button>
           </div>
