@@ -5,6 +5,10 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from datetime import datetime
+from rest_framework.permissions import IsAdminUser
+from django.utils import timezone
+from rest_framework.views import APIView
+from django.db.models import Count, Q
 
 from .serializers import (
     PacienteRegistroSerializer, 
@@ -430,3 +434,22 @@ class CitaViewSet(ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+class DashboardMetricsView(APIView):
+    # Solo administrativos/superadmin accede
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        hoy = timezone.now().date()
+        
+        # Consultas de métricas
+        stats = Cita.objects.aggregate(
+            total=Count('id'),
+            citas_hoy=Count('id', filter=Q(fecha=hoy)),
+            canceladas=Count('id', filter=Q(estado='CANCELADA')),
+            pendientes=Count('id', filter=Q(estado='PENDIENTE'))
+        )
+        
+        return Response({
+            "fecha_corte": hoy,
+            "metricas": stats
+        })
