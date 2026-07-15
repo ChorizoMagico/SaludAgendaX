@@ -32,6 +32,12 @@ class CitaService:
         exclude_cita_id: al reprogramar una cita existente, se excluye su propio
         id de todas las búsquedas de conflicto para que no choque consigo misma.
         """
+    def validate_payload(cls, attrs, lock=False, exclude_cita_id=None):
+        """Valida las reglas de negocio de una cita.
+
+        exclude_cita_id: al reprogramar una cita existente, se excluye su propio
+        id de todas las búsquedas de conflicto para que no choque consigo misma.
+        """
         errors = {}
         alerts = []
 
@@ -45,6 +51,11 @@ class CitaService:
 
         def add_error(field, message):
             errors.setdefault(field, []).append(message)
+
+        def _excluir_propia(queryset):
+            if exclude_cita_id:
+                return queryset.exclude(pk=exclude_cita_id)
+            return queryset
 
         def _excluir_propia(queryset):
             if exclude_cita_id:
@@ -105,9 +116,11 @@ class CitaService:
             else:
                 max_citas_por_hora = max(horarios.values_list('max_citas_por_hora', flat=True))
                 citas_hora = _excluir_propia(Cita.objects.filter(
+                citas_hora = _excluir_propia(Cita.objects.filter(
                     medico=medico,
                     fecha=fecha,
                     hora_inicio__hour=hora_inicio.hour,
+                ).exclude(estado='CANCELADA'))
                 ).exclude(estado='CANCELADA'))
                 if lock:
                     citas_hora = citas_hora.select_for_update()
@@ -125,12 +138,16 @@ class CitaService:
                 add_error('medico', 'El médico tiene una excepción de disponibilidad para este horario.')
 
             citas_medico = _excluir_propia(Cita.objects.filter(medico=medico, fecha=fecha).exclude(estado='CANCELADA'))
+            citas_medico = _excluir_propia(Cita.objects.filter(medico=medico, fecha=fecha).exclude(estado='CANCELADA'))
             if lock:
                 citas_medico = citas_medico.select_for_update()
             if citas_medico.filter(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio).exists():
                 add_error('medico', 'El médico ya tiene una cita agendada en el horario seleccionado.')
 
             if paciente:
+                citas_paciente = _excluir_propia(
+                    Cita.objects.filter(paciente=paciente, fecha=fecha).exclude(estado='CANCELADA')
+                )
                 citas_paciente = _excluir_propia(
                     Cita.objects.filter(paciente=paciente, fecha=fecha).exclude(estado='CANCELADA')
                 )
@@ -153,8 +170,10 @@ class CitaService:
 
         if especialidad and fecha:
             citas_especialidad = _excluir_propia(Cita.objects.filter(
+            citas_especialidad = _excluir_propia(Cita.objects.filter(
                 especialidad=especialidad,
                 fecha=fecha,
+            ).exclude(estado='CANCELADA'))
             ).exclude(estado='CANCELADA'))
             if lock:
                 citas_especialidad = citas_especialidad.select_for_update()
@@ -169,10 +188,12 @@ class CitaService:
             fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
 
             citas_paciente_especialidad = _excluir_propia(Cita.objects.filter(
+            citas_paciente_especialidad = _excluir_propia(Cita.objects.filter(
                 paciente=paciente,
                 especialidad=especialidad,
                 fecha__gt=fecha_minima,
                 fecha__lt=fecha_maxima,
+            ).exclude(estado='CANCELADA'))
             ).exclude(estado='CANCELADA'))
 
             if lock:
@@ -180,6 +201,7 @@ class CitaService:
 
             if citas_paciente_especialidad.exists():
                 add_error(
+                    'paciente',
                     'paciente',
                     f'Solo puede agendar una cita de {especialidad.nombre} cada '
                     f'{especialidad.dias_entre_citas} días.'
@@ -201,9 +223,11 @@ class CitaService:
                         fin_periodo = fecha.replace(month=fecha.month + 1, day=1)
 
                 citas_eps = _excluir_propia(Cita.objects.filter(
+                citas_eps = _excluir_propia(Cita.objects.filter(
                     eps=eps,
                     fecha__gte=inicio_periodo,
                     fecha__lt=fin_periodo,
+                ).exclude(estado='CANCELADA'))
                 ).exclude(estado='CANCELADA'))
                 if lock:
                     citas_eps = citas_eps.select_for_update()
@@ -346,48 +370,3 @@ class CitaService:
             )
 
             return cita_bloqueada, alerts
-        
-
-
-    @classmethod
-    def buscar_citas(cls, queryset, filtros):
-        """
-        Aplica filtros dinámicos sobre un queryset de citas.
-
-        Filtros soportados:
-        - fecha
-        - medico
-        - paciente
-        - especialidad
-        - eps
-        - estado
-        """
-
-        fecha = filtros.get("fecha")
-        medico = filtros.get("medico")
-        paciente = filtros.get("paciente")
-        especialidad = filtros.get("especialidad")
-        eps = filtros.get("eps")
-        estado = filtros.get("estado")
-
-        if fecha:
-            queryset = queryset.filter(fecha=fecha)
-
-        if medico:
-            queryset = queryset.filter(medico_id=medico)
-
-        if paciente:
-            queryset = queryset.filter(paciente_id=paciente)
-
-        if especialidad:
-            queryset = queryset.filter(especialidad_id=especialidad)
-
-        if eps:
-            queryset = queryset.filter(eps_id=eps)
-
-        if estado:
-            queryset = queryset.filter(estado=estado)
-
-        return queryset
-        
-    

@@ -5,10 +5,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
 from rest_framework.views import APIView
 from django.db.models import Count, Q
+from django.db import transaction
 from django.db import transaction
 
 
@@ -27,7 +29,8 @@ from .serializers import (
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, HorarioMedico
+from .models import Cita, Especialidad, Paciente, Medico
+from .services import CitaService
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -287,6 +290,12 @@ def cancelar_cita(request, cita_id):
         cita.save()
         transaction.on_commit(lambda: CitaService.enqueue_cancelacion_notification(cita.id))
 
+    with transaction.atomic():
+        cita.estado = 'CANCELADA'
+        cita.motivo = request.data.get('motivo_cancelacion', 'Cancelación solicitada por paciente')
+        cita.save()
+        transaction.on_commit(lambda: CitaService.enqueue_cancelacion_notification(cita.id))
+
     serializer = CitaCancelacionSerializer(cita)
     return Response({
         'mensaje': 'Cita cancelada exitosamente',
@@ -475,49 +484,6 @@ def calendario_citas(request):
     }, status=status.HTTP_200_OK)
 
 
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def mi_agenda_medico(request):
-    """
-    HU-024 - Agenda personal del médico.
-
-    Devuelve únicamente las citas del médico autenticado.
-    """
-
-    medico = Medico.objects.filter(usuario=request.user).first()
-
-    if not medico:
-        return Response(
-            {"error": "El usuario autenticado no tiene perfil de médico."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    citas = (
-        Cita.objects.select_related(
-            "paciente",
-            "paciente__usuario",
-            "especialidad",
-            "eps",
-        )
-        .filter(medico=medico)
-        .order_by("fecha", "hora_inicio")
-    )
-
-    serializer = AgendaMedicoSerializer(citas, many=True)
-
-    return Response({
-        "medico": {
-            "id": medico.id,
-            "nombre": str(medico),
-        },
-        "total_citas": citas.count(),
-        "citas": serializer.data,
-    })
-
-
-
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def historial_citas_paciente(request):
@@ -580,6 +546,7 @@ class EspecialidadViewSet(ModelViewSet):
     authentication_classes = [JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAdministrativeUser]
     http_method_names = ['get', 'post', 'put', 'delete', 'head', 'options']
+    pagination_class = None
 
     def get_queryset(self):
         queryset = Especialidad.objects.prefetch_related('medicos__usuario').order_by('nombre')
@@ -711,43 +678,47 @@ class CitaViewSet(ModelViewSet):
             data['paciente'] = paciente_propio.id
 
         serializer = self.get_serializer(data=data)
+        """
+        Creación de citas (HU-007 paciente / HU-009 administrativo).
+
+        - Un paciente autenticado solo puede agendar citas para sí mismo: el
+          campo 'paciente' del payload se ignora y se reemplaza por su propio
+          registro, sin excepción a ninguna regla de negocio.
+        - Un administrativo/superadministrador puede elegir el paciente en
+          nombre de quien agenda, pero la cita pasa por exactamente las mismas
+          validaciones (disponibilidad del médico, topes EPS, frecuencia,
+          capacidad diaria, etc.) que aplicarían a ese paciente. No hay bypass
+          de reglas de negocio para el rol administrativo.
+
+        Toda la validación de disponibilidad/negocio vive en CitaService
+        (con locking vía select_for_update), invocada desde CitaSerializer.
+        """
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+
+        if not IsAdministrativeUser.is_admin_user(request.user):
+            try:
+                paciente_propio = Paciente.objects.get(usuario=request.user)
+            except Paciente.DoesNotExist:
+                return self._error_response(
+                    {'paciente': ['El usuario autenticado no tiene un perfil de paciente.']},
+                    message='No autorizado',
+                )
+            data['paciente'] = paciente_propio.id
+
+        serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
             return self._error_response(serializer.errors)
 
-
-        medico = serializer.validated_data['medico']
-        fecha = serializer.validated_data['fecha']
-        hora_inicio = serializer.validated_data['hora_inicio']
-        hora_fin = serializer.validated_data['hora_fin']
-
-
-        if not esta_disponible(medico, fecha, hora_inicio, hora_fin):
-            return self._error_response(
-                {'non_field_errors': ['El médico no tiene disponibilidad en este horario o está bloqueado.']},
-                message='Conflicto de horario'
-            )
-
-
-        horario = HorarioMedico.objects.filter(medico=medico, dia_semana=fecha.weekday()).first()
-        limite = horario.max_citas_por_hora if horario else 4 # Valor por defecto
-        
-        citas_existentes = Cita.objects.filter(
-            medico=medico, fecha=fecha, hora_inicio=hora_inicio
-        ).exclude(estado='CANCELADA').count()
-
-        if citas_existentes >= limite:
-            return self._error_response(
-                {'non_field_errors': ['Se ha alcanzado el límite de citas para esta hora.']},
-                message='Capacidad máxima alcanzada'
-            )
-
-        response = super().create(request, *args, **kwargs)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
         return Response(
             {
                 'status': 'success',
-                'data': response.data,
+                'code': 201,
+                'data': serializer.data,
             },
-            status=response.status_code,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
         )
 
 class DashboardMetricsView(APIView):
