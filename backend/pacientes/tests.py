@@ -7,13 +7,17 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .models import (
+    AlertaTopeEnviada,
     Cita,
+    ConfiguracionGlobal,
     EPS,
     Especialidad,
+    Feriado,
     HorarioMedico,
     Medico,
     NotificacionPendiente,
     Paciente,
+    Sede,
     TopeEPS,
 )
 from .notificaciones import enviar_notificaciones_pendientes
@@ -611,3 +615,225 @@ class NotificacionesEmailTests(APITestCase):
         resumen = enviar_notificaciones_pendientes()
         self.assertEqual(resumen['procesadas'], 0)
         self.assertEqual(len(mail.outbox), 0)
+
+
+class AlertaTopeEPSTests(APITestCase):
+    """HU-022: alertas de tope EPS al superadministrador (por email)."""
+
+    def setUp(self):
+        self.superadmin_user = User.objects.create_user(
+            username='super2@saludagendax.com', email='super2@saludagendax.com',
+            password='Password123!', is_superuser=True, is_staff=True,
+        )
+        self.eps = EPS.objects.create(nombre='EPS Salud', codigo='EPS007', activo=True)
+        TopeEPS.objects.create(eps=self.eps, limite_citas=5, tipo_periodo='MENSUAL')
+
+        self.paciente_user = User.objects.create_user(
+            username='pacienteT@saludagendax.com', email='pacienteT@saludagendax.com',
+            password='Password123!',
+        )
+        self.paciente = Paciente.objects.create(
+            usuario=self.paciente_user, tipo_documento='CC', num_documento='999999999',
+            fecha_nacimiento='1990-01-01', eps=self.eps, direccion='Calle 9',
+        )
+        self.medico_user = User.objects.create_user(
+            username='medicoT@saludagendax.com', email='medicoT@saludagendax.com',
+            password='Password123!', first_name='Sara', last_name='Vega',
+        )
+        self.medico = Medico.objects.create(usuario=self.medico_user, registro_medico='RM-008', activo=True)
+        self.especialidad = Especialidad.objects.create(
+            nombre='Endocrinologia', descripcion='Hormonas', activo=True, capacidad_diaria=20,
+        )
+        self.medico.especialidades.add(self.especialidad)
+
+        self.fecha_base = timezone.localdate() + timedelta(days=3)
+        self.url = reverse('cita-list')
+
+    def _crear_cita_directa(self, dias_offset, hora_inicio, hora_fin):
+        fecha = self.fecha_base + timedelta(days=dias_offset)
+        HorarioMedico.objects.get_or_create(
+            medico=self.medico, dia_semana=fecha.weekday(),
+            defaults={'hora_inicio': '08:00:00', 'hora_fin': '18:00:00', 'max_citas_por_hora': 4, 'activo': True},
+        )
+        return Cita.objects.create(
+            paciente=self.paciente, medico=self.medico, especialidad=self.especialidad, eps=self.eps,
+            fecha=fecha, hora_inicio=hora_inicio, hora_fin=hora_fin,
+            fecha_hora=timezone.make_aware(datetime.strptime(f'{fecha} {hora_inicio}', '%Y-%m-%d %H:%M:%S')),
+            estado='CONFIRMADA', tipo_cita='consulta_general', motivo='Control',
+        )
+
+    def test_envia_alerta_al_alcanzar_80_por_ciento(self):
+        for i in range(3):
+            self._crear_cita_directa(i + 1, '08:00:00', '08:30:00')
+
+        self.client.force_authenticate(user=self.paciente_user)
+        fecha_cuarta = self.fecha_base + timedelta(days=10)
+        HorarioMedico.objects.get_or_create(
+            medico=self.medico, dia_semana=fecha_cuarta.weekday(),
+            defaults={'hora_inicio': '08:00:00', 'hora_fin': '18:00:00', 'max_citas_por_hora': 4, 'activo': True},
+        )
+        payload = {
+            'paciente': self.paciente.id, 'medico': self.medico.id, 'especialidad': self.especialidad.id,
+            'fecha': fecha_cuarta.isoformat(),
+            'hora_inicio': '09:00:00', 'hora_fin': '09:30:00', 'eps': self.eps.id,
+            'motivo_consulta': 'Control', 'tipo_cita': 'consulta_general',
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(self.url, payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(AlertaTopeEnviada.objects.filter(eps=self.eps).exists())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(self.eps.nombre, mail.outbox[0].subject)
+
+    def test_no_duplica_alerta_en_el_mismo_periodo(self):
+        for i in range(4):
+            self._crear_cita_directa(i + 1, '08:00:00', '08:30:00')
+
+        from .services import CitaService
+        CitaService.verificar_alerta_tope_eps(self.eps.id, self.fecha_base)
+        CitaService.verificar_alerta_tope_eps(self.eps.id, self.fecha_base)
+
+        self.assertEqual(AlertaTopeEnviada.objects.filter(eps=self.eps).count(), 1)
+        self.assertEqual(len(mail.outbox), 1)
+
+
+class ConfiguracionGlobalTests(APITestCase):
+    """HU-023: parámetros globales del sistema."""
+
+    def setUp(self):
+        self.superadmin_user = User.objects.create_user(
+            username='super1@saludagendax.com', email='super1@saludagendax.com',
+            password='Password123!', is_superuser=True, is_staff=True,
+        )
+        self.admin_user = User.objects.create_user(
+            username='admin5@saludagendax.com', email='admin5@saludagendax.com',
+            password='Password123!', is_staff=True,
+        )
+        self.url = reverse('configuracion-global')
+
+    def test_admin_normal_puede_leer_pero_no_escribir(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.put(self.url, {'anticipacion_minima_horas': 5}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_superadmin_puede_actualizar_configuracion(self):
+        self.client.force_authenticate(user=self.superadmin_user)
+        response = self.client.put(
+            self.url,
+            {'anticipacion_minima_horas': 5, 'anticipacion_maxima_dias': 30},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        config = ConfiguracionGlobal.get_solo()
+        self.assertEqual(config.anticipacion_minima_horas, 5)
+        self.assertEqual(config.anticipacion_maxima_dias, 30)
+
+    def test_rechaza_horario_apertura_mayor_que_cierre(self):
+        self.client.force_authenticate(user=self.superadmin_user)
+        response = self.client.put(
+            self.url,
+            {'horario_apertura': '20:00:00', 'horario_cierre': '08:00:00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class FeriadoYReglasGlobalesCitaTests(APITestCase):
+    """HU-023: feriados y reglas institucionales aplicadas al agendar citas."""
+
+    def setUp(self):
+        self.eps = EPS.objects.create(nombre='EPS Salud', codigo='EPS006', activo=True)
+        self.admin_user = User.objects.create_user(
+            username='admin6@saludagendax.com', email='admin6@saludagendax.com',
+            password='Password123!', is_staff=True,
+        )
+        self.paciente_user = User.objects.create_user(
+            username='pacienteF@saludagendax.com', email='pacienteF@saludagendax.com',
+            password='Password123!',
+        )
+        self.paciente = Paciente.objects.create(
+            usuario=self.paciente_user, tipo_documento='CC', num_documento='888888888',
+            fecha_nacimiento='1990-01-01', eps=self.eps, direccion='Calle 8',
+        )
+        self.medico_user = User.objects.create_user(
+            username='medicoF@saludagendax.com', email='medicoF@saludagendax.com',
+            password='Password123!', first_name='Jorge', last_name='Leon',
+        )
+        self.medico = Medico.objects.create(usuario=self.medico_user, registro_medico='RM-007', activo=True)
+        self.especialidad = Especialidad.objects.create(
+            nombre='Ortopedia', descripcion='Huesos', activo=True, capacidad_diaria=20,
+        )
+        self.medico.especialidades.add(self.especialidad)
+
+        self.fecha = timezone.localdate() + timedelta(days=3)
+        HorarioMedico.objects.create(
+            medico=self.medico, dia_semana=self.fecha.weekday(),
+            hora_inicio='08:00:00', hora_fin='18:00:00', max_citas_por_hora=4, activo=True,
+        )
+        self.url = reverse('cita-list')
+        self.client.force_authenticate(user=self.paciente_user)
+
+    def _payload(self, **overrides):
+        base = {
+            'paciente': self.paciente.id, 'medico': self.medico.id, 'especialidad': self.especialidad.id,
+            'fecha': self.fecha.isoformat(), 'hora_inicio': '09:00:00', 'hora_fin': '09:30:00',
+            'eps': self.eps.id, 'motivo_consulta': 'Control', 'tipo_cita': 'consulta_general',
+        }
+        base.update(overrides)
+        return base
+
+    def test_no_se_puede_agendar_en_feriado(self):
+        Feriado.objects.create(fecha=self.fecha, descripcion='Festivo de prueba')
+        response = self.client.post(self.url, self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('fecha', response.data['errors'])
+
+    def test_rechaza_fuera_de_horario_institucional(self):
+        ConfiguracionGlobal.objects.update_or_create(
+            pk=1, defaults={'horario_apertura': '10:00:00', 'horario_cierre': '16:00:00'}
+        )
+        response = self.client.post(self.url, self._payload(hora_inicio='09:00:00', hora_fin='09:30:00'), format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('hora_inicio', response.data['errors'])
+
+    def test_rechaza_por_anticipacion_minima(self):
+        ConfiguracionGlobal.objects.update_or_create(pk=1, defaults={'anticipacion_minima_horas': 999999})
+        response = self.client.post(self.url, self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('hora_inicio', response.data['errors'])
+
+
+class SedeEndpointTests(APITestCase):
+    """HU-023: CRUD de sedes."""
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='admin7@saludagendax.com', email='admin7@saludagendax.com',
+            password='Password123!', is_staff=True,
+        )
+        self.normal_user = User.objects.create_user(
+            username='normal7@saludagendax.com', email='normal7@saludagendax.com',
+            password='Password123!',
+        )
+
+    def test_admin_puede_crear_sede(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            reverse('sede-list'),
+            {'nombre': 'Sede Norte', 'direccion': 'Cra 1 # 2-3', 'telefono': '3000000000', 'activo': True},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Sede.objects.filter(nombre='Sede Norte').exists())
+
+    def test_no_admin_no_puede_crear_sede(self):
+        self.client.force_authenticate(user=self.normal_user)
+        response = self.client.post(
+            reverse('sede-list'), {'nombre': 'Sede Sur'}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
