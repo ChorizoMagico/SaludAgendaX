@@ -9,6 +9,7 @@ router.register(r'horarios', views.HorarioMedicoViewSet, basename='horario')
 router.register(r'citas', views.CitaViewSet, basename='cita')
 router.register(r'sedes', views.SedeViewSet, basename='sede')
 router.register(r'feriados', views.FeriadoViewSet, basename='feriado')
+router.register(r'eps', views.EPSViewSet, basename='eps')
 
 urlpatterns = [
     path('registro/', views.registro_paciente, name='registro_paciente'),

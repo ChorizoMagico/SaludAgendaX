@@ -10,7 +10,7 @@ import {
   subscribeUsuarios,
   getUsuarioPorId,
 } from "./mockData";
-// import axiosClient from "../api/axiosClient"; // descomenta cuando apagues el mock
+import axiosClient from "../api/axiosClient";
 
 const AuthContext = createContext(null);
 
@@ -48,7 +48,47 @@ function borrarSesion() {
 // shared/mockData.js, para que los dashboards de paciente y médico lean
 // exactamente los mismos usuarios que este contexto usa para el login.
 // ─────────────────────────────────────────────────────────────────────────
-const USE_MOCK = true;
+// USE_MOCK ahora se controla con VITE_USE_MOCK (ver .env.example).
+// Por defecto sigue en true (comportamiento anterior sin cambios) a menos
+// que se ponga explícitamente VITE_USE_MOCK=false.
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Conexión real al backend (solo rol "paciente" por ahora).
+//
+// El backend solo tiene implementados login/registro para pacientes; los
+// roles medico/administrativo/superadministrador no tienen todavía un flujo
+// propio (no hay alta de médico/admin, ni "solicitud de autorización" en el
+// backend), así que ESOS roles siguen usando el mock incluso con
+// VITE_USE_MOCK=false. Ver el resumen de la tarea para el detalle completo.
+// ─────────────────────────────────────────────────────────────────────────
+async function realLogin(cedula, password) {
+  // El backend recibe el campo `username` de SimpleJWT, pero internamente
+  // ahora acepta también el número de documento (cédula) y lo resuelve al
+  // username real (ver PacienteTokenSerializer en el backend).
+  const { data } = await axiosClient.post("/login/", { username: cedula, password });
+  return { data: { token: data.access, refresh: data.refresh, user: data.user } };
+}
+
+async function realRegisterPaciente(datos) {
+  const { data } = await axiosClient.post("/registro/", {
+    email: datos.correo,
+    password: datos.password,
+    password_confirm: datos.confirmPassword ?? datos.password,
+    nombres: datos.nombres,
+    apellidos: datos.apellidos,
+    tipo_documento: datos.tipoDocumento ?? "CC",
+    num_documento: datos.cedula,
+    fecha_nacimiento: datos.fechaNacimiento, // ver nota: aún no hay input en el form
+    eps_id: datos.epsId, // ver nota: el form todavía manda el nombre de la EPS, no su id
+    direccion: datos.direccion ?? "",
+    // NOTA (pendiente): `telefono` no se envía porque el modelo Paciente en
+    // el backend todavía no tiene esa columna (falta una migración).
+  });
+  return { data: { token: data.access, refresh: data.refresh, user: data.user } };
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 
 function mockLogin(cedula, password) {
   return new Promise((resolve, reject) => {
@@ -230,7 +270,7 @@ export function AuthProvider({ children }) {
   async function login(cedula, password) {
     const { data } = USE_MOCK
       ? await mockLogin(cedula, password)
-      : await axiosClient.post("/auth/login", { cedula, password });
+      : await realLogin(cedula, password);
 
     const expiraEn = Date.now() + SESSION_DURATION_MS;
     guardarSesion(data.token, data.user, expiraEn);
@@ -243,9 +283,12 @@ export function AuthProvider({ children }) {
   }
 
   async function register(datos) {
-    const { data } = USE_MOCK
-      ? await mockRegister(datos)
-      : await axiosClient.post("/auth/register", datos);
+    // Solo el rol "paciente" tiene un flujo real en el backend hoy.
+    // medico/administrativo siguen en mock (ver nota más arriba).
+    const usaBackendReal = !USE_MOCK && datos.rol === "paciente";
+    const { data } = usaBackendReal
+      ? await realRegisterPaciente(datos)
+      : await mockRegister(datos);
 
     const expiraEn = Date.now() + SESSION_DURATION_MS;
     guardarSesion(data.token, data.user, expiraEn);
@@ -257,10 +300,15 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  // NOTA (pendiente, NO conectado en esta tarea): updateProfile, forgotPassword
+  // y resetPassword siguen usando el mock siempre, incluso con
+  // VITE_USE_MOCK=false. El backend expone `/perfil/`, `/recuperar-contrasena/`
+  // y `/reset-contrasena/`, pero con formas de payload distintas a las de acá
+  // (ej. reset-contrasena pide `uidb64` + `token`, no solo `token`), así que
+  // falta adaptar esta capa antes de activarlos. Se dejan siempre en mock por
+  // ahora para no romper el flujo con llamadas a endpoints mal formados.
   async function updateProfile(cambios) {
-    const actualizado = USE_MOCK
-      ? actualizarUsuarioMock(user.id, cambios)
-      : (await axiosClient.put(`/usuarios/${user.id}`, cambios)).data;
+    const actualizado = actualizarUsuarioMock(user.id, cambios);
 
     const sesion = leerSesion();
     if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn);
@@ -269,16 +317,12 @@ export function AuthProvider({ children }) {
   }
 
   async function forgotPassword(correo) {
-    const { data } = USE_MOCK
-      ? await mockForgotPassword(correo)
-      : await axiosClient.post("/auth/forgot-password", { correo });
+    const { data } = await mockForgotPassword(correo);
     return data;
   }
 
   async function resetPassword(token, nuevaPassword) {
-    const { data } = USE_MOCK
-      ? await mockResetPassword(token, nuevaPassword)
-      : await axiosClient.post("/auth/reset-password", { token, password: nuevaPassword });
+    const { data } = await mockResetPassword(token, nuevaPassword);
     return data;
   }
 
