@@ -1,6 +1,5 @@
 asgiref==3.11.0
 python-decouple==3.8
-dj-database-url==2.1.0
 azure-ai-contentunderstanding==1.2.0b2
 azure-ai-documentintelligence==1.0.2
 azure-core==1.41.0
