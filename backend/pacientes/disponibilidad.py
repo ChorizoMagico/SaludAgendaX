@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, time
-from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario
-from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario
+from .models import HorarioMedico, Cita, ExcepcionMedico, ExcepcionHorario, Feriado
 
 def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos=30):
     """
@@ -51,6 +50,11 @@ def calcular_slots_disponibles(medico, fecha_inicio, fecha_fin, duracion_minutos
             dias_bloqueados.add(ex.fecha)
         else:
             bloqueos_medico_por_dia.setdefault(ex.fecha, []).append((ex.hora_inicio, ex.hora_fin))
+
+    # HU-023: los feriados institucionales bloquean el día completo para todos los médicos.
+    dias_bloqueados.update(
+        Feriado.objects.filter(fecha__range=[fecha_actual, fecha_limite]).values_list('fecha', flat=True)
+    )
 
     citas_db = Cita.objects.filter(
         medico=medico,

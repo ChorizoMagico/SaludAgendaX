@@ -7,6 +7,8 @@ router = DefaultRouter()
 router.register(r'especialidades', views.EspecialidadViewSet, basename='especialidad')
 router.register(r'horarios', views.HorarioMedicoViewSet, basename='horario')
 router.register(r'citas', views.CitaViewSet, basename='cita')
+router.register(r'sedes', views.SedeViewSet, basename='sede')
+router.register(r'feriados', views.FeriadoViewSet, basename='feriado')
 
 urlpatterns = [
     path('registro/', views.registro_paciente, name='registro_paciente'),
@@ -25,6 +27,7 @@ urlpatterns = [
     path("dashboard/ocupacion/",views.DashboardOcupacionView.as_view(),name="dashboard-ocupacion",),
     path('medicos/mi-agenda/', views.mi_agenda_medico, name='mi-agenda-medico'),
     path('alertas-topes/', views.AlertaTopeEnviadaListView.as_view(), name='alertas-topes'),
+    path('configuracion/', views.ConfiguracionGlobalView.as_view(), name='configuracion-global'),
 ]
 
 urlpatterns += router.urls

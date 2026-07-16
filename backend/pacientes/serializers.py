@@ -12,6 +12,9 @@ from .models import (
     Medico,
     HorarioMedico,
     AlertaTopeEnviada,
+    Sede,
+    Feriado,
+    ConfiguracionGlobal,
 )
 
 
@@ -356,3 +359,44 @@ class AlertaTopeEnviadaSerializer(serializers.ModelSerializer):
             'porcentaje_uso', 'creado_en',
         ]
         read_only_fields = fields
+
+
+class SedeSerializer(serializers.ModelSerializer):
+    """HU-023: sedes de la institución."""
+
+    class Meta:
+        model = Sede
+        fields = ['id', 'nombre', 'direccion', 'telefono', 'activo']
+
+
+class FeriadoSerializer(serializers.ModelSerializer):
+    """HU-023: días feriados institucionales."""
+
+    class Meta:
+        model = Feriado
+        fields = ['id', 'fecha', 'descripcion']
+
+
+class ConfiguracionGlobalSerializer(serializers.ModelSerializer):
+    """HU-023: parámetros globales del sistema (tabla singleton)."""
+
+    class Meta:
+        model = ConfiguracionGlobal
+        fields = [
+            'horario_apertura',
+            'horario_cierre',
+            'anticipacion_minima_horas',
+            'anticipacion_maxima_dias',
+            'contacto_soporte_email',
+            'actualizado_en',
+        ]
+        read_only_fields = ['actualizado_en']
+
+    def validate(self, attrs):
+        apertura = attrs.get('horario_apertura', getattr(self.instance, 'horario_apertura', None))
+        cierre = attrs.get('horario_cierre', getattr(self.instance, 'horario_cierre', None))
+        if apertura is not None and cierre is not None and apertura >= cierre:
+            raise serializers.ValidationError(
+                {'horario_apertura': 'El horario de apertura debe ser menor que el de cierre.'}
+            )
+        return attrs
