@@ -12,9 +12,11 @@ from rest_framework import serializers
 from .models import (
     AlertaTopeEnviada,
     Cita,
+    ConfiguracionGlobal,
     EPS,
     Especialidad,
     ExcepcionMedico,
+    Feriado,
     HorarioMedico,
     Medico,
     NotificacionPendiente,
@@ -74,6 +76,25 @@ class CitaService:
         if fecha and fecha < today:
             add_error('fecha', 'La fecha de la cita no puede estar en el pasado.')
 
+        if fecha and Feriado.objects.filter(fecha=fecha).exists():
+            add_error('fecha', 'La fecha seleccionada es un feriado institucional.')
+
+        config_global = ConfiguracionGlobal.get_solo()
+        if fecha and (fecha - today).days > config_global.anticipacion_maxima_dias:
+            add_error(
+                'fecha',
+                f'No se pueden agendar citas con más de {config_global.anticipacion_maxima_dias} '
+                f'días de anticipación.',
+            )
+
+        if hora_inicio and hora_fin:
+            if hora_inicio < config_global.horario_apertura or hora_fin > config_global.horario_cierre:
+                add_error(
+                    'hora_inicio',
+                    f'La institución solo atiende entre las {config_global.horario_apertura} '
+                    f'y las {config_global.horario_cierre}.',
+                )
+
         if hora_inicio and hora_fin:
             if hora_inicio >= hora_fin:
                 add_error('hora_inicio', 'La hora de inicio debe ser menor que la hora de fin.')
@@ -91,6 +112,16 @@ class CitaService:
                     add_error(
                         'hora_fin',
                         f'La duración máxima de la cita es de {cls.MAX_DURACION_MINUTOS} minutos.',
+                    )
+
+            if fecha:
+                inicio_cita_dt = timezone.make_aware(datetime.combine(fecha, hora_inicio))
+                minimo_requerido = timezone.now() + timedelta(hours=config_global.anticipacion_minima_horas)
+                if inicio_cita_dt < minimo_requerido:
+                    add_error(
+                        'hora_inicio',
+                        f'La cita debe agendarse con al menos {config_global.anticipacion_minima_horas} '
+                        f'hora(s) de anticipación.',
                     )
 
         if paciente and not paciente.usuario.is_active:
