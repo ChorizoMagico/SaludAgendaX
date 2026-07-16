@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { extraerMensajeError } from "../../api/axiosClient";
 import medicosImg from "../../img/medicos5.jpg";
 import logo from "../../img/favicon.png";
 
@@ -9,6 +10,9 @@ export default function ResetPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
+  // El backend real firma el link con uidb64 + token (ver
+  // pacientes/utils.py:enviar_email_recuperacion). El flujo mock no lo usa.
+  const uidb64 = searchParams.get("uidb64");
 
   const [password, setPassword] = useState("");
   const [confirmar, setConfirmar] = useState("");
@@ -37,11 +41,11 @@ export default function ResetPassword() {
 
     setEnviando(true);
     try {
-      await resetPassword(token, password);
+      await resetPassword(uidb64, token, password);
       setListo(true);
       setTimeout(() => navigate("/login"), 2500);
     } catch (err) {
-      setError(err?.response?.data?.detail ?? "No pudimos restablecer tu contraseña. Intenta de nuevo.");
+      setError(extraerMensajeError(err, "No pudimos restablecer tu contraseña. Intenta de nuevo."));
     } finally {
       setEnviando(false);
     }

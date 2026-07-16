@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { extraerMensajeError } from "../../api/axiosClient";
 import medicosImg from "../../img/medicos4.jpg";
 import logo from "../../img/favicon.png";
 
@@ -22,7 +23,7 @@ export default function ForgotPassword() {
       setMockToken(data._mockToken ?? null);
       setEstado("enviado");
     } catch (err) {
-      setError(err?.response?.data?.detail ?? "No pudimos procesar la solicitud. Intenta de nuevo.");
+      setError(extraerMensajeError(err, "No pudimos procesar la solicitud. Intenta de nuevo."));
       setEstado("form");
     }
   }

@@ -49,6 +49,12 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
+# NOTA (conexion FE-BE): usado para construir el link de recuperación de
+# contraseña que se envía por correo (ver pacientes/utils.py). Antes estaba
+# hardcodeado a http://localhost:3000, pero el frontend real (Vite) corre en
+# el puerto 5173, así que ese link nunca hubiera funcionado en desarrollo.
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
+
 
 # Application definition
 

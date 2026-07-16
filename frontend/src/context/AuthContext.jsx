@@ -79,13 +79,31 @@ async function realRegisterPaciente(datos) {
     apellidos: datos.apellidos,
     tipo_documento: datos.tipoDocumento ?? "CC",
     num_documento: datos.cedula,
-    fecha_nacimiento: datos.fechaNacimiento, // ver nota: aún no hay input en el form
-    eps_id: datos.epsId, // ver nota: el form todavía manda el nombre de la EPS, no su id
+    fecha_nacimiento: datos.fechaNacimiento,
+    eps_id: datos.epsId,
     direccion: datos.direccion ?? "",
-    // NOTA (pendiente): `telefono` no se envía porque el modelo Paciente en
-    // el backend todavía no tiene esa columna (falta una migración).
+    telefono: datos.telefono ?? "",
   });
   return { data: { token: data.access, refresh: data.refresh, user: data.user } };
+}
+
+// NOTA (conexion FE-BE): recuperar/restablecer contraseña ya usan el
+// backend real (antes seguían siempre en mock). El backend firma el reset
+// con `uidb64` + `token` (no solo `token`, como hacía el mock), por eso
+// `resetPassword` ahora recibe ambos valores (ver ResetPassword.jsx).
+async function realForgotPassword(correo) {
+  const { data } = await axiosClient.post("/recuperar-contrasena/", { email: correo });
+  return { data: { enviado: true, mensaje: data.mensaje } };
+}
+
+async function realResetPassword(uidb64, token, nuevaPassword) {
+  const { data } = await axiosClient.post("/reset-contrasena/", {
+    uidb64,
+    token,
+    nueva_contrasena: nuevaPassword,
+    nueva_contrasena_confirm: nuevaPassword,
+  });
+  return { data: { ok: true, mensaje: data.mensaje } };
 }
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -300,13 +318,12 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  // NOTA (pendiente, NO conectado en esta tarea): updateProfile, forgotPassword
-  // y resetPassword siguen usando el mock siempre, incluso con
-  // VITE_USE_MOCK=false. El backend expone `/perfil/`, `/recuperar-contrasena/`
-  // y `/reset-contrasena/`, pero con formas de payload distintas a las de acá
-  // (ej. reset-contrasena pide `uidb64` + `token`, no solo `token`), así que
-  // falta adaptar esta capa antes de activarlos. Se dejan siempre en mock por
-  // ahora para no romper el flujo con llamadas a endpoints mal formados.
+  // NOTA (pendiente, NO conectado en esta tarea): updateProfile sigue usando
+  // el mock siempre, incluso con VITE_USE_MOCK=false. El backend expone
+  // `/perfil/` para esto, pero el resto del dashboard de paciente (citas,
+  // calendario, etc.) todavía lee/escribe sobre mockData, así que conectar
+  // solo updateProfile dejaría al usuario editado con datos inconsistentes
+  // entre back y front hasta que se conecte todo el dashboard.
   async function updateProfile(cambios) {
     const actualizado = actualizarUsuarioMock(user.id, cambios);
 
@@ -317,12 +334,18 @@ export function AuthProvider({ children }) {
   }
 
   async function forgotPassword(correo) {
-    const { data } = await mockForgotPassword(correo);
+    const { data } = USE_MOCK
+      ? await mockForgotPassword(correo)
+      : await realForgotPassword(correo);
     return data;
   }
 
-  async function resetPassword(token, nuevaPassword) {
-    const { data } = await mockResetPassword(token, nuevaPassword);
+  // `uidb64` viene del link que el backend real manda por correo
+  // (?uidb64=...&token=...). En el flujo mock no existe, así que se ignora.
+  async function resetPassword(uidb64, token, nuevaPassword) {
+    const { data } = USE_MOCK
+      ? await mockResetPassword(token, nuevaPassword)
+      : await realResetPassword(uidb64, token, nuevaPassword);
     return data;
   }
 
