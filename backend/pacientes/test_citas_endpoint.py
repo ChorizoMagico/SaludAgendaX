@@ -428,6 +428,109 @@ class CitaCreacionAdministrativaTests(APITestCase):
         self.assertIn('medico', response.data['errors'])
 
 
+class CancelacionCitaTests(APITestCase):
+    """HU-010: cancelación de citas libera cupos y vuelve a quedar disponible."""
+
+    def setUp(self):
+        self.eps = EPS.objects.create(nombre='EPS Cancelacion', codigo='EPS005', activo=True)
+        self.paciente_user = User.objects.create_user(
+            username='pacienteCancel@saludagendax.com',
+            email='pacienteCancel@saludagendax.com',
+            password='Password123!',
+        )
+        self.paciente = Paciente.objects.create(
+            usuario=self.paciente_user,
+            tipo_documento='CC',
+            num_documento='666666666',
+            fecha_nacimiento='1990-01-01',
+            eps=self.eps,
+            direccion='Calle 6',
+        )
+        self.medico_user = User.objects.create_user(
+            username='medicoCancel@saludagendax.com',
+            email='medicoCancel@saludagendax.com',
+            password='Password123!',
+            first_name='Elena',
+            last_name='Soto',
+        )
+        self.medico = Medico.objects.create(usuario=self.medico_user, registro_medico='RM-006', activo=True)
+        self.especialidad = Especialidad.objects.create(
+            nombre='Psiquiatria',
+            descripcion='Salud mental',
+            activo=True,
+            capacidad_diaria=20,
+        )
+        self.medico.especialidades.add(self.especialidad)
+
+        self.fecha = timezone.localdate() + timedelta(days=3)
+        HorarioMedico.objects.create(
+            medico=self.medico,
+            dia_semana=self.fecha.weekday(),
+            hora_inicio='08:00:00',
+            hora_fin='18:00:00',
+            max_citas_por_hora=1,
+            activo=True,
+        )
+
+        self.cita = Cita.objects.create(
+            paciente=self.paciente,
+            medico=self.medico,
+            especialidad=self.especialidad,
+            eps=self.eps,
+            fecha=self.fecha,
+            hora_inicio='09:00:00',
+            hora_fin='09:30:00',
+            fecha_hora=timezone.make_aware(datetime.strptime(f'{self.fecha} 09:00:00', '%Y-%m-%d %H:%M:%S')),
+            estado='CONFIRMADA',
+            tipo_cita='consulta_general',
+            motivo='Control',
+        )
+        self.client.force_authenticate(user=self.paciente_user)
+        self.url = reverse('cancelar_cita', args=[self.cita.id])
+
+    def test_cancelar_cita_libera_cupo_y_reaparece_en_disponibilidad(self):
+        response = self.client.patch(self.url, {'motivo_cancelacion': 'No puedo asistir'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, 'CANCELADA')
+
+        disponibilidad_response = self.client.get(
+            reverse('disponibilidad_medica'),
+            {
+                'medico_id': self.medico.id,
+                'fecha_inicio': datetime.combine(self.fecha, datetime.strptime('09:00:00', '%H:%M:%S').time()).isoformat(),
+                'fecha_fin': datetime.combine(self.fecha, datetime.strptime('09:00:00', '%H:%M:%S').time()).isoformat(),
+                'duracion_minutos': 30,
+            },
+        )
+
+        self.assertEqual(disponibilidad_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(disponibilidad_response.data['slots_disponibles'])
+        slot = disponibilidad_response.data['slots_disponibles'][0]
+        self.assertTrue(slot['disponible'])
+        self.assertEqual(slot['cupos_restantes'], 1)
+
+        reagendamiento_response = self.client.post(
+            reverse('cita-list'),
+            {
+                'paciente': self.paciente.id,
+                'medico': self.medico.id,
+                'especialidad': self.especialidad.id,
+                'fecha': self.fecha.isoformat(),
+                'hora_inicio': '09:00:00',
+                'hora_fin': '09:30:00',
+                'eps': self.eps.id,
+                'motivo_consulta': 'Reagendamiento tras cancelación',
+                'tipo_cita': 'consulta_general',
+            },
+            format='json',
+        )
+
+        self.assertEqual(reagendamiento_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(reagendamiento_response.data['status'], 'success')
+
+
 class ReprogramarCitaTests(APITestCase):
     """HU-013: reprogramación de citas."""
 
