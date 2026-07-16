@@ -29,11 +29,16 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
     # User.first_name/last_name en create().
     nombres = serializers.CharField(write_only=True, required=True, max_length=150)
     apellidos = serializers.CharField(write_only=True, required=True, max_length=150)
+    # NOTA (conexion FE-BE): antes se descartaba porque el modelo Paciente no
+    # tenía columna `telefono` (ver migración 0008). El formulario siempre
+    # lo pide, así que aquí se acepta y se persiste.
+    telefono = serializers.CharField(required=False, allow_blank=True, max_length=30)
 
     class Meta:
         model = Paciente
         fields = ['email', 'password', 'password_confirm', 'nombres', 'apellidos',
-                  'tipo_documento', 'num_documento', 'fecha_nacimiento', 'eps_id', 'direccion']
+                  'tipo_documento', 'num_documento', 'fecha_nacimiento', 'eps_id',
+                  'direccion', 'telefono']
 
     def validate(self, data):
         if data['password'] != data['password_confirm']:
@@ -122,6 +127,7 @@ def _user_payload(user):
             'cedula': paciente.num_documento,
             'eps': paciente.eps.nombre if paciente.eps else None,
             'direccion': paciente.direccion,
+            'telefono': paciente.telefono,
         })
 
     medico = Medico.objects.filter(usuario=user).first()
@@ -194,7 +200,7 @@ class PacientePerfilSerializer(serializers.ModelSerializer):
     class Meta:
         model = Paciente
         fields = ['id', 'email', 'primer_nombre', 'apellido', 'tipo_documento', 
-                  'num_documento', 'fecha_nacimiento', 'eps', 'direccion']
+                  'num_documento', 'fecha_nacimiento', 'eps', 'direccion', 'telefono']
 
     def get_email(self, obj):
         return obj.usuario.email

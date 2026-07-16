@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { REDIRECT_BY_ROLE } from "../../context/roles";
+import { extraerMensajeError } from "../../api/axiosClient";
 import medicosImg from "../../img/medicos2.jpg";
 import logo from "../../img/favicon.png";
 
@@ -33,11 +34,9 @@ export default function Login() {
       const destino = REDIRECT_BY_ROLE[usuario?.rol] ?? "/";
       navigate(destino, { replace: true });
     } catch (err) {
-      const mensaje =
-        err?.response?.data?.detail ||
-        err?.response?.data?.message ||
-        "Credenciales incorrectas. Verifica tu documento de identidad y contraseña.";
-      setError(mensaje);
+      setError(
+        extraerMensajeError(err, "Credenciales incorrectas. Verifica tu documento de identidad y contraseña.")
+      );
     } finally {
       setLoading(false);
     }

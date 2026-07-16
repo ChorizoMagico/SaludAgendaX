@@ -32,6 +32,11 @@ class Paciente(models.Model):
     fecha_nacimiento = models.DateField()
     eps = models.ForeignKey(EPS, on_delete=models.SET_NULL, null=True)
     direccion = models.CharField(max_length=255, blank=True)
+    # NOTA (conexion FE-BE): el formulario de registro/perfil siempre pide
+    # teléfono, pero esta columna no existía en el backend y el dato se
+    # perdía en el registro real. Se agrega en blank=True para no romper
+    # pacientes ya existentes (creados antes de esta migración).
+    telefono = models.CharField(max_length=30, blank=True)
 
     class Meta:
         db_table = 'paciente'
