@@ -4,12 +4,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
-from datetime import datetime
+from datetime import datetime, timedelta
 from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
 from rest_framework.views import APIView
 from django.db.models import Count, Q
-from .disponibilidad import esta_disponible
+from django.db import transaction
 
 
 from .serializers import (
@@ -20,17 +20,22 @@ from .serializers import (
     PacientePerfilSerializer,
     CitaSerializer,
     CitaCancelacionSerializer,
-    CitaListSerializer
+    CitaListSerializer,
+    HorarioMedicoSerializer,
+    AgendaMedicoSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad
+from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico
+from .services import CitaService
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import permission_classes
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count
 
 @api_view(['POST'])
 def registro_paciente(request):
@@ -277,15 +282,242 @@ def cancelar_cita(request, cita_id):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     # Cancelar cita
-    cita.estado = 'CANCELADA'
-    cita.motivo = request.data.get('motivo_cancelacion', 'Cancelación solicitada por paciente')
-    cita.save()
-    
+    with transaction.atomic():
+        cita.estado = 'CANCELADA'
+        cita.motivo = request.data.get('motivo_cancelacion', 'Cancelación solicitada por paciente')
+        cita.save()
+        transaction.on_commit(lambda: CitaService.enqueue_cancelacion_notification(cita.id))
+
     serializer = CitaCancelacionSerializer(cita)
     return Response({
         'mensaje': 'Cita cancelada exitosamente',
         'cita': serializer.data
     }, status=status.HTTP_200_OK)
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def reprogramar_cita(request, cita_id):
+    """
+    Reprograma (cambia fecha/hora de) una cita existente.
+
+    PATCH /api/citas/:id/reprogramar/
+
+    Body:
+    {
+        "fecha": "2026-07-25",
+        "hora_inicio": "10:00:00",
+        "hora_fin": "10:30:00"
+    }
+
+    Solo el paciente propietario o un usuario administrativo pueden reprogramar.
+    Se valida contra las mismas reglas de negocio que la creación de citas
+    (disponibilidad del médico, tope EPS, frecuencia, etc.), excluyendo la
+    propia cita de los chequeos de conflicto.
+    """
+    try:
+        cita = Cita.objects.select_related('paciente__usuario', 'medico').get(id=cita_id)
+    except Cita.DoesNotExist:
+        return Response({'error': 'Cita no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not IsAdministrativeUser.is_admin_user(request.user):
+        try:
+            paciente = Paciente.objects.get(usuario=request.user)
+        except Paciente.DoesNotExist:
+            return Response({'error': 'Usuario no es paciente'}, status=status.HTTP_403_FORBIDDEN)
+        if cita.paciente != paciente:
+            return Response(
+                {'error': 'No tienes permiso para reprogramar esta cita'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    fecha_raw = request.data.get('fecha')
+    hora_inicio_raw = request.data.get('hora_inicio')
+    hora_fin_raw = request.data.get('hora_fin')
+
+    if not all([fecha_raw, hora_inicio_raw, hora_fin_raw]):
+        return Response(
+            {'error': 'Se requieren los campos fecha, hora_inicio y hora_fin'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        nueva_fecha = datetime.strptime(fecha_raw, '%Y-%m-%d').date()
+        nueva_hora_inicio = datetime.strptime(hora_inicio_raw, '%H:%M:%S').time()
+        nueva_hora_fin = datetime.strptime(hora_fin_raw, '%H:%M:%S').time()
+    except ValueError:
+        return Response(
+            {'error': 'Formato inválido. fecha=YYYY-MM-DD, hora_inicio/hora_fin=HH:MM:SS'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        cita_actualizada, alerts = CitaService.reprogramar_cita(
+            cita, nueva_fecha, nueva_hora_inicio, nueva_hora_fin
+        )
+    except serializers.ValidationError as exc:
+        return Response(
+            {
+                'status': 'error',
+                'code': 400,
+                'message': 'No es posible reprogramar la cita',
+                'errors': exc.detail,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    serializer = CitaListSerializer(cita_actualizada)
+    return Response({
+        'mensaje': 'Cita reprogramada exitosamente',
+        'cita': serializer.data,
+        'alertas': alerts,
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def calendario_citas(request):
+    """
+    Calendario de citas con vistas diaria, semanal y mensual (HU-011).
+
+    GET /api/calendario/?vista=diaria&fecha=2026-07-20&medico_id=1&especialidad_id=2&estado=CONFIRMADA
+
+    Parámetros (todos opcionales salvo lo indicado):
+    - vista: 'diaria' (default), 'semanal' o 'mensual'
+    - fecha: fecha de referencia, default hoy (YYYY-MM-DD)
+    - medico_id: filtrar por médico
+    - especialidad_id: filtrar por especialidad
+    - estado: PENDIENTE, CONFIRMADA o CANCELADA
+
+    Nota: el modelo actual no tiene un concepto de "sede", por lo que ese
+    filtro (mencionado en la especificación) no está implementado todavía.
+
+    Visibilidad:
+    - Administrativo/superadmin: ve todas las citas.
+    - Médico: ve solo su propia agenda.
+    - Paciente: ve solo sus propias citas.
+    """
+    vista = request.query_params.get('vista', 'diaria')
+    if vista not in ('diaria', 'semanal', 'mensual'):
+        return Response(
+            {'error': "El parámetro 'vista' debe ser 'diaria', 'semanal' o 'mensual'."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    fecha_raw = request.query_params.get('fecha')
+    try:
+        fecha_referencia = (
+            datetime.strptime(fecha_raw, '%Y-%m-%d').date() if fecha_raw else timezone.localdate()
+        )
+    except ValueError:
+        return Response({'error': 'Formato de fecha inválido. Usa YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if vista == 'diaria':
+        fecha_inicio_rango = fecha_referencia
+        fecha_fin_rango = fecha_referencia
+    elif vista == 'semanal':
+        fecha_inicio_rango = fecha_referencia - timedelta(days=fecha_referencia.weekday())
+        fecha_fin_rango = fecha_inicio_rango + timedelta(days=6)
+    else:  # mensual
+        fecha_inicio_rango = fecha_referencia.replace(day=1)
+        if fecha_referencia.month == 12:
+            fecha_fin_rango = fecha_referencia.replace(year=fecha_referencia.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            fecha_fin_rango = fecha_referencia.replace(month=fecha_referencia.month + 1, day=1) - timedelta(days=1)
+
+    citas = Cita.objects.select_related(
+        'paciente', 'paciente__usuario', 'medico', 'medico__usuario', 'especialidad', 'eps'
+    ).filter(fecha__gte=fecha_inicio_rango, fecha__lte=fecha_fin_rango)
+
+    es_admin = IsAdministrativeUser.is_admin_user(request.user)
+    if not es_admin:
+        medico_propio = Medico.objects.filter(usuario=request.user).first()
+        if medico_propio:
+            citas = citas.filter(medico=medico_propio)
+        else:
+            try:
+                paciente_propio = Paciente.objects.get(usuario=request.user)
+            except Paciente.DoesNotExist:
+                return Response({'error': 'Usuario sin perfil de paciente o médico'}, status=status.HTTP_403_FORBIDDEN)
+            citas = citas.filter(paciente=paciente_propio)
+
+    medico_id = request.query_params.get('medico_id')
+    if medico_id:
+        citas = citas.filter(medico_id=medico_id)
+
+    especialidad_id = request.query_params.get('especialidad_id')
+    if especialidad_id:
+        citas = citas.filter(especialidad_id=especialidad_id)
+
+    estado_filter = request.query_params.get('estado')
+    if estado_filter:
+        citas = citas.filter(estado=estado_filter)
+
+    citas = citas.order_by('fecha', 'hora_inicio')
+
+    dias = {}
+    for cita in citas:
+        clave = cita.fecha.isoformat()
+        dias.setdefault(clave, []).append({
+            'id': cita.id,
+            'hora_inicio': cita.hora_inicio.isoformat() if cita.hora_inicio else None,
+            'hora_fin': cita.hora_fin.isoformat() if cita.hora_fin else None,
+            'estado': cita.estado,
+            'medico': str(cita.medico),
+            'especialidad': cita.especialidad.nombre,
+            'paciente': cita.paciente.usuario.get_full_name() or cita.paciente.usuario.email,
+        })
+
+    return Response({
+        'vista': vista,
+        'fecha_inicio': fecha_inicio_rango.isoformat(),
+        'fecha_fin': fecha_fin_rango.isoformat(),
+        'total_citas': citas.count(),
+        'dias': dias,
+    }, status=status.HTTP_200_OK)
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def mi_agenda_medico(request):
+    """
+    HU-024 - Agenda personal del médico.
+
+    Devuelve únicamente las citas del médico autenticado.
+    """
+
+    medico = Medico.objects.filter(usuario=request.user).first()
+
+    if not medico:
+        return Response(
+            {"error": "El usuario autenticado no tiene perfil de médico."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    citas = (
+        Cita.objects.select_related(
+            "paciente",
+            "paciente__usuario",
+            "especialidad",
+            "eps",
+        )
+        .filter(medico=medico)
+        .order_by("fecha", "hora_inicio")
+    )
+
+    serializer = AgendaMedicoSerializer(citas, many=True)
+
+    return Response({
+        "medico": {
+            "id": medico.id,
+            "nombre": str(medico),
+        },
+        "total_citas": citas.count(),
+        "citas": serializer.data,
+    })
+
+
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -349,6 +581,7 @@ class EspecialidadViewSet(ModelViewSet):
     authentication_classes = [JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAdministrativeUser]
     http_method_names = ['get', 'post', 'put', 'delete', 'head', 'options']
+    pagination_class = None
 
     def get_queryset(self):
         queryset = Especialidad.objects.prefetch_related('medicos__usuario').order_by('nombre')
@@ -359,6 +592,42 @@ class EspecialidadViewSet(ModelViewSet):
     def perform_destroy(self, instance):
         instance.activo = False
         instance.save(update_fields=['activo', 'fecha_actualizacion'])
+
+
+class HorarioMedicoViewSet(ModelViewSet):
+    """
+    CRUD de horarios médicos (HU-018).
+
+    Permite:
+    - Listar horarios
+    - Crear horarios
+    - Editar horarios
+    - Eliminar horarios
+    """
+
+    serializer_class = HorarioMedicoSerializer
+    queryset = HorarioMedico.objects.select_related("medico", "medico__usuario").order_by(
+        "medico", "dia_semana", "hora_inicio"
+    )
+
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeUser]
+
+    http_method_names = [
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+        "head",
+        "options",
+    ]
+
+
+class CitaPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = "page_size"
+    max_page_size = 100
 
 
 class CitaViewSet(ModelViewSet):
@@ -382,6 +651,7 @@ class CitaViewSet(ModelViewSet):
     serializer_class = CitaSerializer
     authentication_classes = [JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAdministrativeOrAuthenticatedPatient]
+    pagination_class = CitaPagination
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
@@ -393,10 +663,16 @@ class CitaViewSet(ModelViewSet):
             'especialidad',
             'eps',
         ).order_by('-fecha', '-hora_inicio')
-        if IsAdministrativeUser.is_admin_user(self.request.user):
-            return queryset
-        return queryset.filter(paciente__usuario=self.request.user)
+        if not IsAdministrativeUser.is_admin_user(self.request.user):
+            queryset = queryset.filter(paciente__usuario=self.request.user)
 
+        queryset = CitaService.buscar_citas(
+            queryset,
+            self.request.query_params
+        )
+        return queryset
+    
+    
     def _error_response(self, errors, message='No es posible agendar la cita'):
         return Response(
             {
@@ -409,39 +685,48 @@ class CitaViewSet(ModelViewSet):
         )
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        """
+        Creación de citas (HU-007 paciente / HU-009 administrativo).
+
+        - Un paciente autenticado solo puede agendar citas para sí mismo: el
+          campo 'paciente' del payload se ignora y se reemplaza por su propio
+          registro, sin excepción a ninguna regla de negocio.
+        - Un administrativo/superadministrador puede elegir el paciente en
+          nombre de quien agenda, pero la cita pasa por exactamente las mismas
+          validaciones (disponibilidad del médico, topes EPS, frecuencia,
+          capacidad diaria, etc.) que aplicarían a ese paciente. No hay bypass
+          de reglas de negocio para el rol administrativo.
+
+        Toda la validación de disponibilidad/negocio vive en CitaService
+        (con locking vía select_for_update), invocada desde CitaSerializer.
+        """
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+
+        if not IsAdministrativeUser.is_admin_user(request.user):
+            try:
+                paciente_propio = Paciente.objects.get(usuario=request.user)
+            except Paciente.DoesNotExist:
+                return self._error_response(
+                    {'paciente': ['El usuario autenticado no tiene un perfil de paciente.']},
+                    message='No autorizado',
+                )
+            data['paciente'] = paciente_propio.id
+
+        serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
             return self._error_response(serializer.errors)
 
-
-        medico = serializer.validated_data['medico']
-        fecha = serializer.validated_data['fecha']
-        hora_inicio = serializer.validated_data['hora_inicio']
-        hora_fin = serializer.validated_data['hora_fin']
-
-
-        if not esta_disponible(medico, fecha, hora_inicio, hora_fin):
-            return self._error_response(
-                {'non_field_errors': ['El médico no tiene disponibilidad en este horario o está bloqueado.']},
-                message='Conflicto de horario'
-            )
-
-
-        horario = HorarioMedico.objects.filter(medico=medico, dia_semana=fecha.weekday()).first()
-        limite = horario.max_citas_por_hora if horario else 4 # Valor por defecto
-        
-        citas_existentes = Cita.objects.filter(
-            medico=medico, fecha=fecha, hora_inicio=hora_inicio
-        ).exclude(estado='CANCELADA').count()
-
-        if citas_existentes >= limite:
-            return self._error_response(
-                {'non_field_errors': ['Se ha alcanzado el límite de citas para esta hora.']},
-                message='Capacidad máxima alcanzada'
-            )
-
-
-        return super().create(request, *args, **kwargs)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                'status': 'success',
+                'code': 201,
+                'data': serializer.data,
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
 class DashboardMetricsView(APIView):
     # Solo administrativos/superadmin accede
@@ -461,4 +746,93 @@ class DashboardMetricsView(APIView):
         return Response({
             "fecha_corte": hoy,
             "metricas": stats
+        })
+    
+
+class DashboardOcupacionView(APIView):
+    """
+    HU-021 - Reporte de ocupación por médico y especialidad.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+
+        queryset = Cita.objects.exclude(estado="CANCELADA")
+
+        fecha_inicio = request.query_params.get("fecha_inicio")
+        fecha_fin = request.query_params.get("fecha_fin")
+
+        if fecha_inicio:
+            queryset = queryset.filter(fecha__gte=fecha_inicio)
+
+        if fecha_fin:
+            queryset = queryset.filter(fecha__lte=fecha_fin)
+
+        total_citas = queryset.count()
+
+        ocupacion_medicos = (
+            queryset.values(
+                "medico__usuario__first_name",
+                "medico__usuario__last_name",
+            )
+            .annotate(
+                total=Count("id")
+            )
+            .order_by("-total")
+        )
+
+        ocupacion_especialidades = (
+            queryset.values(
+                "especialidad__nombre",
+            )
+            .annotate(
+                total=Count("id")
+            )
+            .order_by("-total")
+        )
+
+        ocupacion_eps = (
+            queryset.values(
+                "eps__nombre",
+            )
+            .annotate(
+                total=Count("id")
+            )
+            .order_by("-total")
+        )
+
+        return Response({
+
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+
+            "total_citas": total_citas,
+
+            "por_medico": [
+                {
+                    "medico": (
+                        f"{item['medico__usuario__first_name']} "
+                        f"{item['medico__usuario__last_name']}"
+                    ).strip(),
+                    "total": item["total"],
+                }
+                for item in ocupacion_medicos
+            ],
+
+            "por_especialidad": [
+                {
+                    "especialidad": item["especialidad__nombre"],
+                    "total": item["total"],
+                }
+                for item in ocupacion_especialidades
+            ],
+
+            "por_eps": [
+                {
+                    "eps": item["eps__nombre"],
+                    "total": item["total"],
+                }
+                for item in ocupacion_eps
+            ],
         })
