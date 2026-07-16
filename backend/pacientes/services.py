@@ -1,11 +1,16 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
+import logging
 
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
+    AlertaTopeEnviada,
     Cita,
     EPS,
     Especialidad,
@@ -24,6 +29,20 @@ class CitaService:
     MIN_DURACION_MINUTOS = 15
     MAX_DURACION_MINUTOS = 120
     MAX_CANCELACIONES_30_DIAS = 3
+
+    @staticmethod
+    def _periodo_para_fecha(tope, fecha):
+        """Devuelve (inicio, fin) del período (semanal/mensual) que contiene `fecha`."""
+        if tope.tipo_periodo == 'SEMANAL':
+            inicio_periodo = fecha - timedelta(days=fecha.weekday())
+            fin_periodo = inicio_periodo + timedelta(days=7)
+        else:
+            inicio_periodo = fecha.replace(day=1)
+            if fecha.month == 12:
+                fin_periodo = fecha.replace(year=fecha.year + 1, month=1, day=1)
+            else:
+                fin_periodo = fecha.replace(month=fecha.month + 1, day=1)
+        return inicio_periodo, fin_periodo
 
     @classmethod
     def validate_payload(cls, attrs, lock=False, exclude_cita_id=None):
@@ -187,15 +206,7 @@ class CitaService:
         if eps and fecha:
             tope = TopeEPS.objects.filter(eps=eps).first()
             if tope:
-                if tope.tipo_periodo == 'SEMANAL':
-                    inicio_periodo = fecha - timedelta(days=fecha.weekday())
-                    fin_periodo = inicio_periodo + timedelta(days=7)
-                else:
-                    inicio_periodo = fecha.replace(day=1)
-                    if fecha.month == 12:
-                        fin_periodo = fecha.replace(year=fecha.year + 1, month=1, day=1)
-                    else:
-                        fin_periodo = fecha.replace(month=fecha.month + 1, day=1)
+                inicio_periodo, fin_periodo = cls._periodo_para_fecha(tope, fecha)
 
                 citas_eps = _excluir_propia(Cita.objects.filter(
                     eps=eps,
@@ -216,6 +227,79 @@ class CitaService:
                     add_error('eps', 'El presupuesto asignado a la EPS está agotado.')
 
         return errors, alerts
+
+    @classmethod
+    def verificar_alerta_tope_eps(cls, eps_id, fecha):
+        """
+        HU-022: si el uso del tope de una EPS llega al 80% o más en su período
+        actual, envía un correo de alerta al/los superadministrador(es).
+
+        Se llama después de confirmar la persistencia de una cita (no durante
+        la validación en sí) y es idempotente por período gracias al
+        UniqueConstraint de AlertaTopeEnviada.
+        """
+        try:
+            eps = EPS.objects.get(pk=eps_id)
+        except EPS.DoesNotExist:
+            return
+
+        tope = TopeEPS.objects.filter(eps=eps).first()
+        if not tope:
+            return
+
+        inicio_periodo, fin_periodo = cls._periodo_para_fecha(tope, fecha)
+        citas_periodo = Cita.objects.filter(
+            eps=eps, fecha__gte=inicio_periodo, fecha__lt=fin_periodo,
+        ).exclude(estado='CANCELADA').count()
+
+        if tope.limite_citas <= 0:
+            return
+
+        porcentaje_uso = Decimal(citas_periodo) / Decimal(tope.limite_citas)
+        if porcentaje_uso < Decimal('0.8'):
+            return
+
+        _, creada = AlertaTopeEnviada.objects.get_or_create(
+            eps=eps,
+            periodo_inicio=inicio_periodo,
+            defaults={
+                'periodo_fin': fin_periodo,
+                'porcentaje_uso': (porcentaje_uso * 100).quantize(Decimal('0.01')),
+            },
+        )
+        if not creada:
+            return  # ya se avisó en este período, no reenviar
+
+        destinatarios = cls._emails_superadmin()
+        if not destinatarios:
+            return
+
+        asunto = f'SaludAgendaX - Alerta: tope de {eps.nombre} al {int(porcentaje_uso * 100)}%'
+        mensaje = (
+            f"La EPS {eps.nombre} alcanzó el {int(porcentaje_uso * 100)}% de su tope de citas "
+            f"({citas_periodo}/{tope.limite_citas}) para el período "
+            f"{inicio_periodo.isoformat()} - {fin_periodo.isoformat()}.\n\n"
+            f"Revisa la configuración de topes en el panel administrativo."
+        )
+        try:
+            send_mail(asunto, mensaje, settings.DEFAULT_FROM_EMAIL, destinatarios)
+        except Exception:
+            logging.getLogger(__name__).exception('No se pudo enviar la alerta de tope EPS para %s', eps.nombre)
+
+    @staticmethod
+    def _emails_superadmin():
+        emails = list(
+            User.objects.filter(is_superuser=True).exclude(email='').values_list('email', flat=True)
+        )
+        emails += list(
+            User.objects.filter(groups__name='superadministrador')
+            .exclude(email='')
+            .values_list('email', flat=True)
+        )
+        emails = list(dict.fromkeys(emails))
+        if not emails:
+            emails = list(getattr(settings, 'ALERTA_TOPES_EMAILS', []))
+        return emails
 
     @classmethod
     def create_cita(cls, attrs):
@@ -245,6 +329,7 @@ class CitaService:
             )
 
             transaction.on_commit(lambda: cls.enqueue_confirmation_notification(cita.id))
+            transaction.on_commit(lambda: cls.verificar_alerta_tope_eps(attrs['eps'].pk, attrs['fecha']))
             return cita, alerts
 
     @classmethod
@@ -340,6 +425,9 @@ class CitaService:
                 lambda: cls.enqueue_reprogramacion_notification(
                     cita_bloqueada.id, fecha_anterior, hora_inicio_anterior
                 )
+            )
+            transaction.on_commit(
+                lambda: cls.verificar_alerta_tope_eps(cita_bloqueada.eps_id, cita_bloqueada.fecha)
             )
 
             return cita_bloqueada, alerts

@@ -11,6 +11,7 @@ from .models import (
     Especialidad,
     Medico,
     HorarioMedico,
+    AlertaTopeEnviada,
 )
 
 
@@ -342,3 +343,16 @@ class AgendaMedicoSerializer(serializers.ModelSerializer):
             "medico_nombre",
             "especialidad_nombre",
         ]
+
+
+class AlertaTopeEnviadaSerializer(serializers.ModelSerializer):
+    """HU-022: alertas de tope EPS ya enviadas (para el panel de alertas)."""
+    eps_nombre = serializers.CharField(source='eps.nombre', read_only=True)
+
+    class Meta:
+        model = AlertaTopeEnviada
+        fields = [
+            'id', 'eps', 'eps_nombre', 'periodo_inicio', 'periodo_fin',
+            'porcentaje_uso', 'creado_en',
+        ]
+        read_only_fields = fields

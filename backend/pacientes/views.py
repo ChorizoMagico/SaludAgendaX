@@ -23,13 +23,14 @@ from .serializers import (
     CitaListSerializer,
     HorarioMedicoSerializer,
     AgendaMedicoSerializer,
+    AlertaTopeEnviadaSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico
+from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico, AlertaTopeEnviada
 from .services import CitaService
-from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
+from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsSuperAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
@@ -836,3 +837,22 @@ class DashboardOcupacionView(APIView):
                 for item in ocupacion_eps
             ],
         })
+
+class AlertaTopeEnviadaListView(APIView):
+    """
+    GET /api/alertas-topes/ (HU-022)
+
+    Lista las alertas de tope EPS ya enviadas a superadministrador
+    (para el panel de alertas del dashboard). Soporta ?eps_id= como filtro
+    opcional.
+    """
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+
+    def get(self, request):
+        alertas = AlertaTopeEnviada.objects.select_related('eps').all()
+        eps_id = request.query_params.get('eps_id')
+        if eps_id:
+            alertas = alertas.filter(eps_id=eps_id)
+        serializer = AlertaTopeEnviadaSerializer(alertas, many=True)
+        return Response({'total': alertas.count(), 'alertas': serializer.data})
