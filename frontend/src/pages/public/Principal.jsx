@@ -14,6 +14,7 @@ import ginecologiaImg from "../../img/ginecologia.jpg";
 import radiologiaImg from "../../img/radiologia.jpg";
 import urologiaImg from "../../img/urologia.jpg";
 import medicosImg from "../../img/medicos.jpg";
+import logo from "../../img/favicon.png";
 
 const especialidades = [
   { icon: "cardiology", nombre: "Cardiología", desc: "Prevención, diagnóstico y tratamiento de enfermedades del corazón.", img: cardiologiaImg },
@@ -113,7 +114,7 @@ export default function Principal() {
       <header className="bg-white border-b border-[#DCE8E5] fixed top-0 w-full z-50">
         <nav className="max-w-[1200px] mx-auto px-4 md:px-20 flex justify-between items-center h-16 md:h-20">
           <div className="flex items-center gap-2 shrink-0">
-            <span className="material-symbols-outlined text-[#0E9668] text-2xl md:text-3xl">stethoscope</span>
+            <img src={logo} alt="SaludAgendaX" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
             <span className="text-xl md:text-2xl font-bold text-[#0F3D3E]">SaludAgendaX</span>
           </div>
 
