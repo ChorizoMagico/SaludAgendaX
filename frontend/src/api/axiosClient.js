@@ -15,14 +15,36 @@ const axiosClient = axios.create({
 
 const SESSION_KEY = "session";
 
-function leerToken() {
+function leerSesion() {
   try {
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw)?.token ?? null;
+    return JSON.parse(raw);
   } catch {
     return null;
   }
+}
+
+function leerToken() {
+  return leerSesion()?.token ?? null;
+}
+
+function leerRefreshToken() {
+  return leerSesion()?.refresh ?? null;
+}
+
+// Sustituye solo el access token dentro de la sesión guardada, sin tocar
+// el resto (user, expiraEn, refresh). AuthContext sigue siendo la única
+// fuente de verdad para crear/borrar la sesión completa; esto solo la
+// actualiza en el lugar cuando el access token se renueva en segundo plano.
+function actualizarAccessToken(nuevoAccess) {
+  const sesion = leerSesion();
+  if (!sesion) return;
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...sesion, token: nuevoAccess }));
+}
+
+function borrarSesion() {
+  sessionStorage.removeItem(SESSION_KEY);
 }
 
 // Adjunta el JWT (access token) guardado por AuthContext a cada petición,
@@ -35,10 +57,76 @@ axiosClient.interceptors.request.use((config) => {
   return config;
 });
 
-// NOTA (pendiente): el backend emite `refresh` además de `access`, pero acá
-// todavía no hay lógica de refresh automático cuando el access token (1h)
-// expira. Por ahora, si expira, la próxima llamada devolverá 401 y el
-// usuario deberá volver a iniciar sesión.
+// ─────────────────────────────────────────────────────────────────────────
+// Refresh automático de sesión.
+//
+// El backend emite `refresh` en login/registro y ahora expone
+// POST /token/refresh/ (rest_framework_simplejwt.views.TokenRefreshView).
+// Cuando una petición responde 401 (access token vencido, dura 1h), se
+// intenta canjear el refresh token una sola vez y se reintenta la petición
+// original con el access nuevo. Si el refresh también falla (venció, dura
+// 1 día, o no existe porque la sesión es del mock), se limpia la sesión y
+// se avisa a AuthContext vía un evento de window para que haga logout y
+// marque sessionExpired, en vez de dejar al usuario con llamadas colgadas.
+//
+// `refreshEnCurso` evita disparar varios refresh en paralelo cuando varias
+// peticiones fallan con 401 casi al mismo tiempo: todas esperan la misma
+// promesa en lugar de pedir un refresh cada una.
+// ─────────────────────────────────────────────────────────────────────────
+let refreshEnCurso = null;
+
+function avisarSesionVencida() {
+  borrarSesion();
+  window.dispatchEvent(new Event("auth:sessionExpired"));
+}
+
+axiosClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    const status = error.response?.status;
+    const url = original?.url ?? "";
+
+    // Nunca reintentar el propio endpoint de refresh, ni login (un 401 ahí
+    // es "credenciales inválidas", no "sesión vencida").
+    const esRefreshUrl = url.includes("/token/refresh/");
+    const esLoginUrl = url.includes("/login/");
+
+    if (status !== 401 || esRefreshUrl || esLoginUrl || !original || original._retry) {
+      return Promise.reject(error);
+    }
+
+    const refresh = leerRefreshToken();
+    if (!refresh) {
+      // Sesión mock (sin refresh) u otro caso sin token para renovar: no hay
+      // nada que intentar, se corta acá.
+      avisarSesionVencida();
+      return Promise.reject(error);
+    }
+
+    original._retry = true;
+
+    try {
+      if (!refreshEnCurso) {
+        refreshEnCurso = axiosClient
+          .post("/token/refresh/", { refresh })
+          .then(({ data }) => {
+            actualizarAccessToken(data.access);
+            return data.access;
+          })
+          .finally(() => {
+            refreshEnCurso = null;
+          });
+      }
+      const nuevoAccess = await refreshEnCurso;
+      original.headers = { ...original.headers, Authorization: `Bearer ${nuevoAccess}` };
+      return axiosClient(original);
+    } catch (refreshError) {
+      avisarSesionVencida();
+      return Promise.reject(refreshError);
+    }
+  }
+);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Los endpoints reales de DRF no siempre devuelven el error bajo `detail`
