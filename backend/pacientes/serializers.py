@@ -23,11 +23,17 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
     eps_id = serializers.IntegerField(required=True)
+    # NOTA (conexion FE-BE): el frontend recoge nombres/apellidos en el
+    # formulario de registro, pero antes se perdian porque no existian en
+    # este serializer. Se agregan aqui como write-only y se mapean a
+    # User.first_name/last_name en create().
+    nombres = serializers.CharField(write_only=True, required=True, max_length=150)
+    apellidos = serializers.CharField(write_only=True, required=True, max_length=150)
 
     class Meta:
         model = Paciente
-        fields = ['email', 'password', 'password_confirm', 'tipo_documento', 
-                  'num_documento', 'fecha_nacimiento', 'eps_id', 'direccion']
+        fields = ['email', 'password', 'password_confirm', 'nombres', 'apellidos',
+                  'tipo_documento', 'num_documento', 'fecha_nacimiento', 'eps_id', 'direccion']
 
     def validate(self, data):
         if data['password'] != data['password_confirm']:
@@ -46,13 +52,15 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         validated_data.pop('password_confirm')
         eps_id = validated_data.pop('eps_id')
+        nombres = validated_data.pop('nombres')
+        apellidos = validated_data.pop('apellidos')
 
         user = User.objects.create_user(
             username=email,
             email=email,
             password=password,
-            first_name='',
-            last_name=''
+            first_name=nombres,
+            last_name=apellidos,
         )
 
         eps = EPS.objects.get(id=eps_id)
@@ -65,16 +73,91 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
         return paciente
 
 
+class EPSSerializer(serializers.ModelSerializer):
+    """Serializer de solo lectura para el selector de EPS del registro."""
+
+    class Meta:
+        model = EPS
+        fields = ['id', 'nombre', 'codigo', 'activo']
+        read_only_fields = fields
+
+
+def _rol_de_usuario(user):
+    """Determina el rol de un django User para el objeto `user` que
+    consume el frontend (paciente/medico/administrativo/superadministrador).
+
+    NOTA (conexion FE-BE, gap pendiente): hoy solo se resuelve realmente
+    "paciente" (via el modelo Paciente) y "administrativo"/"superadministrador"
+    (via grupos o is_staff/is_superuser). El modelo Medico no tiene un
+    concepto de rol/login propio todavia, así que un usuario Medico sin
+    grupo asignado caerá aquí como "medico" solo si existe el registro,
+    pero el LOGIN de médicos no está conectado end-to-end (ver resumen).
+    """
+    if user.is_superuser or user.groups.filter(name='superadministrador').exists():
+        return 'superadministrador'
+    if user.is_staff or user.groups.filter(name='administrativo').exists():
+        return 'administrativo'
+    if Paciente.objects.filter(usuario=user).exists():
+        return 'paciente'
+    if Medico.objects.filter(usuario=user).exists():
+        return 'medico'
+    return None
+
+
+def _user_payload(user):
+    """Arma el objeto `user` con la forma que espera el frontend
+    (nombre, apellido, cedula, correo, rol, etc.) a partir de un django User.
+    """
+    payload = {
+        'id': user.id,
+        'nombre': user.first_name,
+        'apellido': user.last_name,
+        'correo': user.email,
+        'rol': _rol_de_usuario(user),
+    }
+
+    paciente = Paciente.objects.filter(usuario=user).select_related('eps').first()
+    if paciente:
+        payload.update({
+            'cedula': paciente.num_documento,
+            'eps': paciente.eps.nombre if paciente.eps else None,
+            'direccion': paciente.direccion,
+        })
+
+    medico = Medico.objects.filter(usuario=user).first()
+    if medico:
+        payload.update({
+            'registro_medico': medico.registro_medico,
+            'especialidades': list(medico.especialidades.values_list('nombre', flat=True)),
+        })
+
+    return payload
+
+
 class PacienteTokenSerializer(TokenObtainPairSerializer):
-    """Serializer personalizado para login"""
-    
+    """Serializer personalizado para login.
+
+    El frontend (Login.jsx) siempre envía el número de documento (cédula)
+    en el campo que aquí se recibe como `username` (nombre heredado de
+    SimpleJWT). Como el django User real se crea con username=email
+    (ver PacienteRegistroSerializer.create), aquí se intenta resolver
+    primero el documento contra Paciente.num_documento y, si no existe,
+    se deja pasar tal cual (para permitir login de superusuarios/staff
+    creados por `createsuperuser` con su username real).
+    """
+
     def validate(self, attrs):
+        documento = attrs.get(self.username_field)
+        if documento:
+            paciente = Paciente.objects.filter(num_documento=documento).select_related('usuario').first()
+            if paciente:
+                attrs[self.username_field] = paciente.usuario.username
+
         data = super().validate(attrs)
         return {
             'access': data['access'],
             'refresh': data['refresh'],
-            'user_id': self.user.id,
-            'email': self.user.email,
+            'user': _user_payload(self.user),
         }
 
 

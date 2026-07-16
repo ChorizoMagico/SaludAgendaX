@@ -27,11 +27,12 @@ from .serializers import (
     SedeSerializer,
     FeriadoSerializer,
     ConfiguracionGlobalSerializer,
+    EPSSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico, AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal
+from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico, AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal, EPS
 from .services import CitaService
 from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsSuperAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
@@ -42,6 +43,7 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models import Count
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def registro_paciente(request):
     """
     Endpoint para registrar un nuevo paciente
@@ -51,10 +53,20 @@ def registro_paciente(request):
     
     if serializer.is_valid():
         paciente = serializer.save()
+        # NOTA (conexion FE-BE): el frontend hace login automático justo
+        # después de registrarse (igual que el mock), así que además del
+        # mensaje original se devuelven token + user con la misma forma
+        # que /login/.
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from .serializers import _user_payload
+        refresh = RefreshToken.for_user(paciente.usuario)
         return Response({
             'mensaje': 'Registro exitoso',
             'paciente_id': paciente.id,
-            'email': paciente.usuario.email
+            'email': paciente.usuario.email,
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': _user_payload(paciente.usuario),
         }, status=status.HTTP_201_CREATED)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -572,6 +584,25 @@ def historial_citas_paciente(request):
         },
         'citas': serializer.data
     })
+class EPSViewSet(ModelViewSet):
+    """
+    API de solo lectura para EPS (aseguradoras).
+
+    NOTA (conexion FE-BE): este endpoint no existía antes; el formulario
+    de registro de paciente necesita listar las EPS reales (con su id)
+    para poder enviar `eps_id` al backend, en vez de la lista de nombres
+    hardcodeada que usa hoy el frontend.
+    GET es público para que el formulario de registro (sin sesión) pueda
+    consultarlo.
+    """
+
+    queryset = EPS.objects.filter(activo=True).order_by('nombre')
+    serializer_class = EPSSerializer
+    permission_classes = [AllowAny]
+    http_method_names = ['get', 'head', 'options']
+    pagination_class = None
+
+
 class EspecialidadViewSet(ModelViewSet):
     """
     API REST para gestión de especialidades médicas.
