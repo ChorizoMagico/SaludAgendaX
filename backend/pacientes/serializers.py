@@ -11,6 +11,10 @@ from .models import (
     Especialidad,
     Medico,
     HorarioMedico,
+    AlertaTopeEnviada,
+    Sede,
+    Feriado,
+    ConfiguracionGlobal,
 )
 
 
@@ -342,3 +346,57 @@ class AgendaMedicoSerializer(serializers.ModelSerializer):
             "medico_nombre",
             "especialidad_nombre",
         ]
+
+
+class AlertaTopeEnviadaSerializer(serializers.ModelSerializer):
+    """HU-022: alertas de tope EPS ya enviadas (para el panel de alertas)."""
+    eps_nombre = serializers.CharField(source='eps.nombre', read_only=True)
+
+    class Meta:
+        model = AlertaTopeEnviada
+        fields = [
+            'id', 'eps', 'eps_nombre', 'periodo_inicio', 'periodo_fin',
+            'porcentaje_uso', 'creado_en',
+        ]
+        read_only_fields = fields
+
+
+class SedeSerializer(serializers.ModelSerializer):
+    """HU-023: sedes de la institución."""
+
+    class Meta:
+        model = Sede
+        fields = ['id', 'nombre', 'direccion', 'telefono', 'activo']
+
+
+class FeriadoSerializer(serializers.ModelSerializer):
+    """HU-023: días feriados institucionales."""
+
+    class Meta:
+        model = Feriado
+        fields = ['id', 'fecha', 'descripcion']
+
+
+class ConfiguracionGlobalSerializer(serializers.ModelSerializer):
+    """HU-023: parámetros globales del sistema (tabla singleton)."""
+
+    class Meta:
+        model = ConfiguracionGlobal
+        fields = [
+            'horario_apertura',
+            'horario_cierre',
+            'anticipacion_minima_horas',
+            'anticipacion_maxima_dias',
+            'contacto_soporte_email',
+            'actualizado_en',
+        ]
+        read_only_fields = ['actualizado_en']
+
+    def validate(self, attrs):
+        apertura = attrs.get('horario_apertura', getattr(self.instance, 'horario_apertura', None))
+        cierre = attrs.get('horario_cierre', getattr(self.instance, 'horario_cierre', None))
+        if apertura is not None and cierre is not None and apertura >= cierre:
+            raise serializers.ValidationError(
+                {'horario_apertura': 'El horario de apertura debe ser menor que el de cierre.'}
+            )
+        return attrs

@@ -23,13 +23,17 @@ from .serializers import (
     CitaListSerializer,
     HorarioMedicoSerializer,
     AgendaMedicoSerializer,
+    AlertaTopeEnviadaSerializer,
+    SedeSerializer,
+    FeriadoSerializer,
+    ConfiguracionGlobalSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico
+from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico, AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal
 from .services import CitaService
-from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser
+from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsSuperAdministrativeUser
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
@@ -836,3 +840,77 @@ class DashboardOcupacionView(APIView):
                 for item in ocupacion_eps
             ],
         })
+
+class AlertaTopeEnviadaListView(APIView):
+    """
+    GET /api/alertas-topes/ (HU-022)
+
+    Lista las alertas de tope EPS ya enviadas a superadministrador
+    (para el panel de alertas del dashboard). Soporta ?eps_id= como filtro
+    opcional.
+    """
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+
+    def get(self, request):
+        alertas = AlertaTopeEnviada.objects.select_related('eps').all()
+        eps_id = request.query_params.get('eps_id')
+        if eps_id:
+            alertas = alertas.filter(eps_id=eps_id)
+        serializer = AlertaTopeEnviadaSerializer(alertas, many=True)
+        return Response({'total': alertas.count(), 'alertas': serializer.data})
+
+
+class SedeViewSet(ModelViewSet):
+    """
+    CRUD de sedes de la institución (HU-023).
+
+    Lectura pública/autenticada; escritura solo administrativos.
+    """
+    serializer_class = SedeSerializer
+    queryset = Sede.objects.all().order_by('nombre')
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+
+
+class FeriadoViewSet(ModelViewSet):
+    """
+    CRUD de feriados institucionales (HU-023).
+
+    Un feriado registrado aquí bloquea automáticamente el agendamiento de
+    citas en esa fecha (ver CitaService.validate_payload).
+    """
+    serializer_class = FeriadoSerializer
+    queryset = Feriado.objects.all().order_by('fecha')
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+
+class ConfiguracionGlobalView(APIView):
+    """
+    GET/PUT de la configuración global del sistema (HU-023).
+
+    Tabla singleton: siempre lee/escribe la única fila de ConfiguracionGlobal.
+    Lectura: cualquier usuario autenticado. Escritura: solo superadministrador.
+    """
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+
+    def get(self, request):
+        config = ConfiguracionGlobal.get_solo()
+        serializer = ConfiguracionGlobalSerializer(config)
+        return Response(serializer.data)
+
+    def put(self, request):
+        config = ConfiguracionGlobal.get_solo()
+        serializer = ConfiguracionGlobalSerializer(config, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(
+                {'status': 'error', 'code': 400, 'message': 'Configuración inválida', 'errors': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer.save()
+        return Response({'status': 'success', 'code': 200, 'data': serializer.data})

@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.functions import Lower
@@ -224,3 +226,90 @@ class ExcepcionHorario(models.Model):
     hora_fin = models.TimeField()
     tipo = models.CharField(max_length=10, choices=TIPO_EXCEPCION)
     motivo = models.TextField(blank=True, null=True)
+
+class AlertaTopeEnviada(models.Model):
+    """Registro de alertas ya enviadas a superadmin (HU-022).
+
+    Cuando el uso de un tope EPS llega al 80% se envía un correo al
+    superadministrador. Este modelo evita reenviar la misma alerta muchas
+    veces dentro del mismo período (semanal/mensual) para la misma EPS.
+    """
+    eps = models.ForeignKey(EPS, on_delete=models.CASCADE, related_name='alertas_tope')
+    periodo_inicio = models.DateField()
+    periodo_fin = models.DateField()
+    porcentaje_uso = models.DecimalField(max_digits=5, decimal_places=2)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'alerta_tope_eps'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['eps', 'periodo_inicio'],
+                name='alerta_tope_eps_periodo_unique',
+            )
+        ]
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f"Alerta {self.eps.nombre} ({self.periodo_inicio} a {self.periodo_fin}): {self.porcentaje_uso}%"
+
+
+class Sede(models.Model):
+    """Sede física de la institución (HU-023)."""
+    nombre = models.CharField(max_length=150, unique=True)
+    direccion = models.CharField(max_length=255, blank=True)
+    telefono = models.CharField(max_length=30, blank=True)
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'sede'
+        verbose_name_plural = 'Sedes'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
+class Feriado(models.Model):
+    """Día feriado institucional en el que no se agendan citas (HU-023)."""
+    fecha = models.DateField(unique=True)
+    descripcion = models.CharField(max_length=150)
+
+    class Meta:
+        db_table = 'feriado'
+        ordering = ['fecha']
+        verbose_name_plural = 'Feriados'
+
+    def __str__(self):
+        return f"{self.fecha} - {self.descripcion}"
+
+
+class ConfiguracionGlobal(models.Model):
+    """Parámetros globales del sistema (HU-023).
+
+    Tabla singleton: siempre se trabaja sobre la fila con pk=1
+    (ver ConfiguracionGlobal.get_solo()).
+    """
+    horario_apertura = models.TimeField(default=time(7, 0))
+    horario_cierre = models.TimeField(default=time(19, 0))
+    anticipacion_minima_horas = models.PositiveIntegerField(
+        default=1,
+        help_text="Horas mínimas de anticipación requeridas para poder agendar una cita.",
+    )
+    anticipacion_maxima_dias = models.PositiveIntegerField(
+        default=90,
+        help_text="Días máximos hacia el futuro en los que se puede agendar una cita.",
+    )
+    contacto_soporte_email = models.EmailField(blank=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'configuracion_global'
+
+    def __str__(self):
+        return "Configuración global del sistema"
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
