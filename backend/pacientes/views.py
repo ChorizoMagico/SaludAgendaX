@@ -581,7 +581,6 @@ class EspecialidadViewSet(ModelViewSet):
     authentication_classes = [JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAdministrativeUser]
     http_method_names = ['get', 'post', 'put', 'delete', 'head', 'options']
-    pagination_class = None
 
     def get_queryset(self):
         queryset = Especialidad.objects.prefetch_related('medicos__usuario').order_by('nombre')

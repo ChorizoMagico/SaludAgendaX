@@ -167,8 +167,6 @@ class CitaService:
         if paciente and especialidad and fecha:
             fecha_minima = fecha - timedelta(days=especialidad.dias_entre_citas)
             fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
-            fecha_minima = fecha - timedelta(days=especialidad.dias_entre_citas)
-            fecha_maxima = fecha + timedelta(days=especialidad.dias_entre_citas)
 
             citas_paciente_especialidad = _excluir_propia(Cita.objects.filter(
                 paciente=paciente,
@@ -181,10 +179,7 @@ class CitaService:
                 citas_paciente_especialidad = citas_paciente_especialidad.select_for_update()
 
             if citas_paciente_especialidad.exists():
-
-            if citas_paciente_especialidad.exists():
                 add_error(
-                    'paciente',
                     'paciente',
                     f'Solo puede agendar una cita de {especialidad.nombre} cada '
                     f'{especialidad.dias_entre_citas} días.'
