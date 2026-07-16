@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { ROLES, REDIRECT_BY_ROLE } from "../../context/roles";
 import { ESPECIALIDADES } from "../../context/mockData";
+import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
 import medicosImg from "../../img/medicos3.jpg";
 import logo from "../../img/favicon.png";
 
@@ -10,7 +11,12 @@ import logo from "../../img/favicon.png";
 // ese rol se asigna manualmente, no vía formulario de autorregistro.
 const ROLES_REGISTRABLES = ROLES.filter((r) => r.key !== "superadministrador");
 
-const EPS_DISPONIBLES = [
+// NOTA (conexion FE-BE): lista de respaldo, usada mientras el modo mock
+// esté activo o si el backend real no responde (ej. no está corriendo).
+// Cuando hay backend disponible, se reemplaza por el resultado real de
+// GET /api/eps/ (ver useEffect más abajo), que trae el `id` real que el
+// registro necesita mandar como `eps_id`.
+const EPS_FALLBACK = [
   "Sura EPS",
   "Nueva EPS",
   "Sanitas",
@@ -18,7 +24,7 @@ const EPS_DISPONIBLES = [
   "Coosalud",
   "Salud Total",
   "Famisanar",
-];
+].map((nombre) => ({ id: null, nombre }));
 
 const TIPOS_DOCUMENTO = [
   { key: "CC", icon: "badge", label: "Cédula de ciudadanía" },
@@ -47,6 +53,7 @@ export default function Register() {
 
   const [paso, setPaso] = useState(1);
   const [rol, setRol] = useState(rolInicial);
+  const [epsDisponibles, setEpsDisponibles] = useState(EPS_FALLBACK);
   const [form, setForm] = useState({
     tipoDocumento: "CC",
     documento: "",
@@ -54,7 +61,9 @@ export default function Register() {
     apellidos: "",
     correo: "",
     telefono: "",
-    eps: EPS_DISPONIBLES[0],
+    fechaNacimiento: "",
+    eps: EPS_FALLBACK[0].nombre,
+    epsId: EPS_FALLBACK[0].id,
     especialidad: "",
     numeroRegistroMedico: "",
     password: "",
@@ -67,6 +76,26 @@ export default function Register() {
   // Una vez enviado el formulario de un rol que requiere autorización,
   // se muestra la pantalla de "pendiente de revisión" en lugar de redirigir.
   const [pendienteAutorizacion, setPendienteAutorizacion] = useState(false);
+
+  // NOTA (conexion FE-BE): trae las EPS reales del backend (con su id) para
+  // el selector del paso 2. Si el backend no responde (mock activo, o el
+  // backend real no está corriendo), se queda con la lista de respaldo.
+  useEffect(() => {
+    let cancelado = false;
+    axiosClient
+      .get("/eps/")
+      .then(({ data }) => {
+        if (cancelado || !Array.isArray(data) || data.length === 0) return;
+        setEpsDisponibles(data);
+        setForm((f) => (f.epsId ? f : { ...f, eps: data[0].nombre, epsId: data[0].id }));
+      })
+      .catch(() => {
+        // Se queda con EPS_FALLBACK; no es un error visible para el usuario.
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   const rolInfo = ROLES_REGISTRABLES.find((r) => r.key === rol);
   const docInfo = TIPOS_DOCUMENTO.find((d) => d.key === form.tipoDocumento);
@@ -107,6 +136,7 @@ export default function Register() {
         return "Completa todos los campos.";
       }
       if (!/^\S+@\S+\.\S+$/.test(form.correo)) return "Ingresa un correo electrónico válido.";
+      if (rol === "paciente" && !form.fechaNacimiento) return "Ingresa tu fecha de nacimiento.";
       if (rol === "medico" && !form.especialidad) return "Indica tu especialidad médica.";
       if (rol === "medico" && !form.numeroRegistroMedico) return "Ingresa tu número de registro médico.";
     }
@@ -170,12 +200,7 @@ export default function Register() {
         navigate(destino, { replace: true });
       }
     } catch (err) {
-      const mensajeError =
-        err?.response?.data?.detail ||
-        err?.response?.data?.message ||
-        "No fue posible crear la cuenta. Intenta de nuevo.";
-
-      setError(mensajeError);
+      setError(extraerMensajeError(err, "No fue posible crear la cuenta. Intenta de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -423,23 +448,43 @@ export default function Register() {
                     />
 
                     {rol === "paciente" && (
-                      <div>
-                        <label htmlFor="eps" className="block text-sm font-medium text-[#0F3D3E] mb-1.5">
-                          Entidad aseguradora (EPS)
-                        </label>
-                        <select
-                          id="eps"
-                          value={form.eps}
-                          onChange={(e) => actualizar("eps", e.target.value)}
-                          className="w-full px-4 py-3 border border-[#DCE8E5] rounded-lg text-[#1A2624] bg-white focus:outline-none focus:ring-2 focus:ring-[#0E9668] focus:border-transparent transition-shadow"
-                        >
-                          {EPS_DISPONIBLES.map((eps) => (
-                            <option key={eps} value={eps}>
-                              {eps}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <>
+                        <Campo
+                          id="fechaNacimiento"
+                          label="Fecha de nacimiento"
+                          type="date"
+                          value={form.fechaNacimiento}
+                          onChange={(v) => actualizar("fechaNacimiento", v)}
+                          icon="calendar_month"
+                        />
+
+                        <div>
+                          <label htmlFor="eps" className="block text-sm font-medium text-[#0F3D3E] mb-1.5">
+                            Entidad aseguradora (EPS)
+                          </label>
+                          <select
+                            id="eps"
+                            value={form.epsId ?? form.eps}
+                            onChange={(e) => {
+                              const seleccionada = epsDisponibles.find(
+                                (eps) => String(eps.id ?? eps.nombre) === e.target.value
+                              );
+                              setForm((f) => ({
+                                ...f,
+                                eps: seleccionada?.nombre ?? e.target.value,
+                                epsId: seleccionada?.id ?? null,
+                              }));
+                            }}
+                            className="w-full px-4 py-3 border border-[#DCE8E5] rounded-lg text-[#1A2624] bg-white focus:outline-none focus:ring-2 focus:ring-[#0E9668] focus:border-transparent transition-shadow"
+                          >
+                            {epsDisponibles.map((eps) => (
+                              <option key={eps.id ?? eps.nombre} value={eps.id ?? eps.nombre}>
+                                {eps.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
                     )}
 
                     {rol === "medico" && (

@@ -30,7 +30,7 @@ def verificar_token(uidb64, token):
 
 def enviar_email_recuperacion(user, uidb64, token):
     """Envía email con link de recuperación"""
-    link = f"http://localhost:3000/reset-password?uidb64={uidb64}&token={token}"
+    link = f"{settings.FRONTEND_URL}/reset-password?uidb64={uidb64}&token={token}"
     asunto = "Recuperar contraseña - SaludAgendaX"
     mensaje = f"""
     Hola {user.first_name},
