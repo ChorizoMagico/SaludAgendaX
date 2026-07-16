@@ -56,18 +56,22 @@ function borrarSesion() {
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Conexión real al backend (solo rol "paciente" por ahora).
+// Conexión real al backend.
 //
-// El backend solo tiene implementados login/registro para pacientes; los
-// roles medico/administrativo/superadministrador no tienen todavía un flujo
-// propio (no hay alta de médico/admin, ni "solicitud de autorización" en el
-// backend), así que ESOS roles siguen usando el mock incluso con
-// VITE_USE_MOCK=false. Ver el resumen de la tarea para el detalle completo.
+// Los 3 roles autorregistrables (paciente/medico/administrativo) ya tienen
+// login/registro reales (punto 1). medico/administrativo se registran
+// 'pendientes' — el backend no emite tokens para ellos (ver realRegisterMedico
+// / realRegisterAdministrativo más abajo), así que register() más adelante
+// no crea sesión para esos casos. superadministrador sigue sin autorregistro
+// (Register.jsx ni siquiera lo ofrece como opción) y perfil/citas/dashboard
+// de médico/administrativo todavía no tienen su propio endpoint, así que esas
+// pantallas (fuera de login/registro) siguen en mock por ahora.
 // ─────────────────────────────────────────────────────────────────────────
 async function realLogin(cedula, password) {
   // El backend recibe el campo `username` de SimpleJWT, pero internamente
   // ahora acepta también el número de documento (cédula) y lo resuelve al
-  // username real (ver PacienteTokenSerializer en el backend).
+  // username real, sin importar el rol (paciente/medico/administrativo) —
+  // ver PacienteTokenSerializer en el backend.
   const { data } = await axiosClient.post("/login/", { username: cedula, password });
   return { data: { token: data.access, refresh: data.refresh, user: data.user } };
 }
@@ -87,6 +91,39 @@ async function realRegisterPaciente(datos) {
     telefono: datos.telefono ?? "",
   });
   return { data: { token: data.access, refresh: data.refresh, user: data.user } };
+}
+
+// NOTA (conexion FE-BE, punto 1): a diferencia de realRegisterPaciente, el
+// backend NO devuelve access/refresh acá — la cuenta queda 'pendiente' hasta
+// que un superadministrador la aprueba (ver AprobarSolicitudView), así que
+// no hay token que guardar todavía. register() más abajo no crea sesión
+// cuando `pendiente` viene en true.
+async function realRegisterMedico(datos) {
+  const { data } = await axiosClient.post("/medicos/registro/", {
+    email: datos.correo,
+    password: datos.password,
+    password_confirm: datos.confirmPassword ?? datos.password,
+    nombres: datos.nombres,
+    apellidos: datos.apellidos,
+    num_documento: datos.cedula,
+    telefono: datos.telefono ?? "",
+    especialidad: datos.especialidad,
+    registro_medico: datos.numeroRegistroMedico,
+  });
+  return { data };
+}
+
+async function realRegisterAdministrativo(datos) {
+  const { data } = await axiosClient.post("/administrativos/registro/", {
+    email: datos.correo,
+    password: datos.password,
+    password_confirm: datos.confirmPassword ?? datos.password,
+    nombres: datos.nombres,
+    apellidos: datos.apellidos,
+    num_documento: datos.cedula,
+    telefono: datos.telefono ?? "",
+  });
+  return { data };
 }
 
 // NOTA (conexion FE-BE): recuperar/restablecer contraseña ya usan el
@@ -317,14 +354,37 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  // NOTA (conexion FE-BE, punto 1): los 3 roles autorregistrables ya pegan
+  // al backend real cuando USE_MOCK=false. paciente vuelve con
+  // access/refresh (sesión inmediata, igual que antes); medico/administrativo
+  // vuelven 'pendientes' (sin tokens), así que NO se guarda sesión ni se
+  // actualiza `user` para esos dos — Register.jsx ya maneja esto mostrando
+  // la pantalla de "pendiente de autorización" sin depender de una sesión
+  // activa (ver ROLES_CON_AUTORIZACION en Register.jsx).
   async function register(datos) {
-    // Solo el rol "paciente" tiene un flujo real en el backend hoy.
-    // medico/administrativo siguen en mock (ver nota más arriba).
-    const usaBackendReal = !USE_MOCK && datos.rol === "paciente";
-    const { data } = usaBackendReal
-      ? await realRegisterPaciente(datos)
-      : await mockRegister(datos);
+    if (USE_MOCK) {
+      const { data } = await mockRegister(datos);
+      return _iniciarSesionPorRegistro(data);
+    }
 
+    if (datos.rol === "medico") {
+      await realRegisterMedico(datos);
+      return { rol: "medico", pendiente: true };
+    }
+
+    if (datos.rol === "administrativo") {
+      await realRegisterAdministrativo(datos);
+      return { rol: "administrativo", pendiente: true };
+    }
+
+    const { data } = await realRegisterPaciente(datos);
+    return _iniciarSesionPorRegistro(data);
+  }
+
+  // Extraído de register(): arranca la sesión con lo que devolvió el
+  // backend/mock cuando el registro SÍ deja la cuenta activa de inmediato
+  // (paciente, o cualquier rol en modo mock).
+  function _iniciarSesionPorRegistro(data) {
     const expiraEn = Date.now() + SESSION_DURATION_MS;
     guardarSesion(data.token, data.user, expiraEn, data.refresh);
     // axiosClient.defaults.headers.common.Authorization = `Bearer ${data.token}`;

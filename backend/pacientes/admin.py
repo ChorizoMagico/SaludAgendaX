@@ -4,6 +4,7 @@ from .models import (
     EPS,
     Especialidad,
     Medico,
+    Administrativo,
     Cita,
     TopeEPS,
     HorarioMedico,
@@ -18,6 +19,7 @@ admin.site.register(Paciente)
 admin.site.register(EPS)
 admin.site.register(Especialidad)
 admin.site.register(Medico)
+admin.site.register(Administrativo)
 admin.site.register(Cita)
 admin.site.register(TopeEPS)
 admin.site.register(HorarioMedico)

@@ -71,18 +71,60 @@ class Especialidad(models.Model):
     def __str__(self):
         return self.nombre
 
+# NOTA (conexion FE-BE, punto 1): estados compartidos por Medico y
+# Administrativo para el flujo de autorización. Las cuentas creadas por
+# autorregistro (ver serializers.MedicoRegistroSerializer /
+# AdministrativoRegistroSerializer) nacen en "pendiente" con
+# User.is_active=False, y solo pasan a "aprobado" (is_active=True) cuando
+# un superadministrador las revisa desde la pantalla "Solicitudes de
+# registro" (ver views.AprobarSolicitudView / RechazarSolicitudView).
+ESTADO_SOLICITUD_CHOICES = [
+    ('pendiente', 'Pendiente de autorización'),
+    ('aprobado', 'Aprobado'),
+    ('rechazado', 'Rechazado'),
+]
+
+
 class Medico(models.Model):
     """Modelo de Médico"""
     usuario = models.OneToOneField(User, on_delete=models.CASCADE)
     especialidades = models.ManyToManyField(Especialidad, related_name='medicos')
     registro_medico = models.CharField(max_length=50, unique=True)
     activo = models.BooleanField(default=True)
+    # NOTA (conexion FE-BE, punto 1): el login (ver PacienteTokenSerializer)
+    # siempre recibe el número de documento, sin importar el rol. Antes
+    # Medico no tenía dónde guardarlo, así que un médico nunca podía
+    # iniciar sesión con su cédula. null/blank=True para no romper filas
+    # existentes creadas antes de esta migración.
+    num_documento = models.CharField(max_length=30, unique=True, null=True, blank=True)
+    telefono = models.CharField(max_length=30, blank=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_SOLICITUD_CHOICES, default='pendiente')
+    motivo_rechazo = models.CharField(max_length=255, blank=True)
 
     class Meta:
         db_table = 'medico'
 
     def __str__(self):
         return f"Dr. {self.usuario.last_name} - {self.usuario.first_name}"
+
+
+class Administrativo(models.Model):
+    """Modelo de personal Administrativo (punto 1: antes de esto solo
+    existía como un django User con is_staff/grupo 'administrativo', sin
+    ningún dato propio ni flujo de autorización)."""
+    usuario = models.OneToOneField(User, on_delete=models.CASCADE)
+    num_documento = models.CharField(max_length=30, unique=True)
+    telefono = models.CharField(max_length=30, blank=True)
+    cargo = models.CharField(max_length=100, blank=True)
+    activo = models.BooleanField(default=False)
+    estado = models.CharField(max_length=20, choices=ESTADO_SOLICITUD_CHOICES, default='pendiente')
+    motivo_rechazo = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = 'administrativo'
+
+    def __str__(self):
+        return f"{self.usuario.first_name} {self.usuario.last_name} (Administrativo)"
     
 class Cita(models.Model):
     ESTADOS = [

@@ -1,10 +1,16 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useEffect } from "react";
 import {
   subscribeUsuarios,
   getSolicitudesPendientes,
   aprobarSolicitud,
   rechazarSolicitud,
 } from "../../context/mockData";
+import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
+
+// NOTA (conexion FE-BE, punto 1): mismo toggle que AuthContext. Con
+// VITE_USE_MOCK=false esta pantalla lee/actúa contra
+// /api/solicitudes-pendientes/ en vez de mockData.
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 const ROL_INFO = {
   medico: { label: "Médico", icon: "stethoscope" },
@@ -12,17 +18,48 @@ const ROL_INFO = {
 };
 
 export default function SolicitudesPendientes() {
-  const solicitudes = useSyncExternalStore(subscribeUsuarios, getSolicitudesPendientes);
+  const solicitudesMock = useSyncExternalStore(subscribeUsuarios, getSolicitudesPendientes);
+  const [solicitudesReales, setSolicitudesReales] = useState([]);
+  const [cargando, setCargando] = useState(USE_MOCK ? false : true);
   const [idRechazando, setIdRechazando] = useState(null);
   const [motivoRechazo, setMotivoRechazo] = useState("");
   const [mensaje, setMensaje] = useState(null); // { tipo: "ok" | "error", texto }
+
+  const solicitudes = USE_MOCK ? solicitudesMock : solicitudesReales;
 
   function mostrarMensaje(tipo, texto) {
     setMensaje({ tipo, texto });
     setTimeout(() => setMensaje(null), 3000);
   }
 
-  function handleAprobar(id, nombreCompleto) {
+  async function cargarSolicitudesReales() {
+    setCargando(true);
+    try {
+      const { data } = await axiosClient.get("/solicitudes-pendientes/");
+      setSolicitudesReales(data.solicitudes ?? []);
+    } catch (err) {
+      mostrarMensaje("error", extraerMensajeError(err, "No fue posible cargar las solicitudes pendientes."));
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!USE_MOCK) cargarSolicitudesReales();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleAprobar(id, nombreCompleto) {
+    if (!USE_MOCK) {
+      try {
+        await axiosClient.post(`/solicitudes-pendientes/${id}/aprobar/`);
+        mostrarMensaje("ok", `Cuenta de ${nombreCompleto} aprobada.`);
+        cargarSolicitudesReales();
+      } catch (err) {
+        mostrarMensaje("error", extraerMensajeError(err, "No fue posible aprobar la solicitud."));
+      }
+      return;
+    }
     const resultado = aprobarSolicitud(id);
     if (resultado.ok) {
       mostrarMensaje("ok", `Cuenta de ${nombreCompleto} aprobada.`);
@@ -36,8 +73,21 @@ export default function SolicitudesPendientes() {
     setMotivoRechazo("");
   }
 
-  function confirmarRechazo(nombreCompleto) {
-    const resultado = rechazarSolicitud(idRechazando, motivoRechazo);
+  async function confirmarRechazo(nombreCompleto) {
+    const id = idRechazando;
+    if (!USE_MOCK) {
+      setIdRechazando(null);
+      try {
+        await axiosClient.post(`/solicitudes-pendientes/${id}/rechazar/`, { motivo: motivoRechazo });
+        setMotivoRechazo("");
+        mostrarMensaje("ok", `Solicitud de ${nombreCompleto} rechazada.`);
+        cargarSolicitudesReales();
+      } catch (err) {
+        mostrarMensaje("error", extraerMensajeError(err, "No fue posible rechazar la solicitud."));
+      }
+      return;
+    }
+    const resultado = rechazarSolicitud(id, motivoRechazo);
     setIdRechazando(null);
     setMotivoRechazo("");
     if (resultado.ok) {
@@ -73,7 +123,14 @@ export default function SolicitudesPendientes() {
         </div>
       )}
 
-      {solicitudes.length === 0 ? (
+      {cargando ? (
+        <div className="bg-white border border-[#DCE8E5] rounded-2xl p-10 text-center">
+          <span className="material-symbols-outlined text-[#0E9668] text-3xl animate-spin block mb-2">
+            progress_activity
+          </span>
+          <p className="text-[#48605C]">Cargando solicitudes...</p>
+        </div>
+      ) : solicitudes.length === 0 ? (
         <div className="bg-white border border-[#DCE8E5] rounded-2xl p-10 text-center">
           <span className="material-symbols-outlined text-[#0E9668] text-4xl mb-2 block">task_alt</span>
           <p className="text-[#48605C]">No hay solicitudes pendientes por revisar.</p>
