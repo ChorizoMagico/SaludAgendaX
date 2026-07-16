@@ -137,6 +137,13 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
 
+# HU-022: destinatarios de respaldo para alertas de tope EPS, usados solo si
+# no hay usuarios superusuarios/grupo 'superadministrador' con email configurado.
+# Formato en .env: ALERTA_TOPES_EMAILS=admin1@correo.com,admin2@correo.com
+ALERTA_TOPES_EMAILS = [
+    email.strip() for email in config('ALERTA_TOPES_EMAILS', default='').split(',') if email.strip()
+]
+
 
 # REST Framework Configuration
 REST_FRAMEWORK = {

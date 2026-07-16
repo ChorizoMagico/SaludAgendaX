@@ -225,3 +225,29 @@ class ExcepcionHorario(models.Model):
     hora_fin = models.TimeField()
     tipo = models.CharField(max_length=10, choices=TIPO_EXCEPCION)
     motivo = models.TextField(blank=True, null=True)
+
+class AlertaTopeEnviada(models.Model):
+    """Registro de alertas ya enviadas a superadmin (HU-022).
+
+    Cuando el uso de un tope EPS llega al 80% se envía un correo al
+    superadministrador. Este modelo evita reenviar la misma alerta muchas
+    veces dentro del mismo período (semanal/mensual) para la misma EPS.
+    """
+    eps = models.ForeignKey(EPS, on_delete=models.CASCADE, related_name='alertas_tope')
+    periodo_inicio = models.DateField()
+    periodo_fin = models.DateField()
+    porcentaje_uso = models.DecimalField(max_digits=5, decimal_places=2)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'alerta_tope_eps'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['eps', 'periodo_inicio'],
+                name='alerta_tope_eps_periodo_unique',
+            )
+        ]
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f"Alerta {self.eps.nombre} ({self.periodo_inicio} a {self.periodo_fin}): {self.porcentaje_uso}%"
