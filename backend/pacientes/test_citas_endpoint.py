@@ -60,8 +60,8 @@ class EspecialidadEndpointTests(APITestCase):
         response = self.client.get(reverse('especialidad-list'))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 1)
-        self.assertEqual(response.data['results'][0]['nombre'], 'Cardiologia')
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['nombre'], 'Cardiologia')
 
     def test_non_admin_cannot_create_specialty(self):
         self.client.force_authenticate(user=self.normal_user)
