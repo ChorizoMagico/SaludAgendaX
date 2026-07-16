@@ -31,6 +31,7 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = [
     "lively-adventure-production-50f7.up.railway.app",
+    "saludagendax-production.up.railway.app",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
