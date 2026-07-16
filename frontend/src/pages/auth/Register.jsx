@@ -4,6 +4,7 @@ import { useAuth } from "../../context/AuthContext";
 import { ROLES, REDIRECT_BY_ROLE } from "../../context/roles";
 import { ESPECIALIDADES } from "../../context/mockData";
 import medicosImg from "../../img/medicos3.jpg";
+import logo from "../../img/favicon.png";
 
 // El registro público no debe permitir crear cuentas de superadministrador:
 // ese rol se asigna manualmente, no vía formulario de autorregistro.
@@ -194,7 +195,7 @@ export default function Register() {
         </div>
         <div className="relative z-10 flex flex-col justify-between p-12 text-white">
           <Link to="/" className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[#0E9668] text-3xl">stethoscope</span>
+            <img src={logo} alt="SaludAgendaX" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
             <span className="text-2xl font-bold">SaludAgendaX</span>
           </Link>
 
