@@ -29,6 +29,22 @@ urlpatterns = [
     path('calendario/', views.calendario_citas, name='calendario_citas'),
     path('pacientes/registro/', views.registro_paciente, name='registro_paciente'),
     path('pacientes/login/', views.PacienteLoginView.as_view(), name='login'),
+    # NOTA (conexion FE-BE, punto 1): registro de médico/administrativo —
+    # autorregistro que queda 'pendiente' hasta que un superadministrador lo
+    # aprueba (ver SolicitudesPendientesListView / Aprobar.../Rechazar...).
+    path('medicos/registro/', views.registro_medico, name='registro_medico'),
+    path('administrativos/registro/', views.registro_administrativo, name='registro_administrativo'),
+    path('solicitudes-pendientes/', views.SolicitudesPendientesListView.as_view(), name='solicitudes-pendientes'),
+    path(
+        'solicitudes-pendientes/<str:solicitud_id>/aprobar/',
+        views.AprobarSolicitudView.as_view(),
+        name='aprobar-solicitud',
+    ),
+    path(
+        'solicitudes-pendientes/<str:solicitud_id>/rechazar/',
+        views.RechazarSolicitudView.as_view(),
+        name='rechazar-solicitud',
+    ),
     path('dashboard/metrics/', DashboardMetricsView.as_view(), name='dashboard-metrics'),
     path("dashboard/ocupacion/",views.DashboardOcupacionView.as_view(),name="dashboard-ocupacion",),
     path('medicos/mi-agenda/', views.mi_agenda_medico, name='mi-agenda-medico'),
