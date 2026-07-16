@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import logo from "../img/favicon.png";
 
 // ---------- Barra superior ----------
 export function TopBar({ nombre }) {
@@ -14,7 +15,7 @@ export function TopBar({ nombre }) {
     <header className="bg-white/70 backdrop-blur-md border-b border-[#DCE8E5] sticky top-0 z-30">
       <div className="max-w-[1200px] mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-[#0E9668] text-2xl">stethoscope</span>
+          <img src={logo} alt="SaludAgendaX" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
           <span className="font-bold text-[#0F3D3E]">SaludAgendaX</span>
         </div>
         <div className="flex items-center gap-4">

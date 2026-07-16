@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import medicosImg from "../../img/medicos4.jpg";
+import logo from "../../img/favicon.png";
 
 export default function ForgotPassword() {
   const { forgotPassword } = useAuth();
@@ -40,7 +41,7 @@ export default function ForgotPassword() {
         </div>
         <div className="relative z-10 flex flex-col justify-between p-12 text-white">
           <Link to="/" className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[#0E9668] text-3xl">stethoscope</span>
+            <img src={logo} alt="SaludAgendaX" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
             <span className="text-2xl font-bold">SaludAgendaX</span>
           </Link>
           <div>
