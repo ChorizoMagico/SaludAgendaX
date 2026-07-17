@@ -898,16 +898,22 @@ function PerfilPaciente({ paciente, citasCount, onGuardar }) {
     direccion: paciente.direccion,
   });
   const [guardado, setGuardado] = useState(false);
+  const [error, setError] = useState("");
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
     setGuardado(false);
+    setError("");
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    await onGuardar(form);
-    setGuardado(true);
+    try {
+      await onGuardar(form);
+      setGuardado(true);
+    } catch (err) {
+      setError(extraerMensajeError(err, "No fue posible guardar los cambios."));
+    }
   }
 
   return (
@@ -938,6 +944,7 @@ function PerfilPaciente({ paciente, citasCount, onGuardar }) {
             Cambios guardados correctamente.
           </p>
         )}
+        {error && <p className="text-sm text-[#BA1A1A] bg-[#FFDAD6] px-3 py-2 rounded-lg">{error}</p>}
 
         <button
           type="submit"
