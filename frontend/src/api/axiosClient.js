@@ -6,8 +6,18 @@ import axios from "axios";
 // VITE_API_URL se define en `.env` (ver `.env.example`). En desarrollo local
 // normalmente es http://localhost:8000/api.
 // ─────────────────────────────────────────────────────────────────────────
+function normalizarUrlApi(urlConfigurada) {
+  const url = urlConfigurada?.trim();
+  if (!url) return "http://localhost:8000/api";
+
+  // Una URL sin protocolo (por ejemplo, la copiada desde Railway) se
+  // interpreta como ruta relativa del frontend. Al anteponer HTTPS se evita
+  // que la carga de EPS y el registro se envíen al servidor equivocado.
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
 const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:8000/api",
+  baseURL: normalizarUrlApi(import.meta.env.VITE_API_URL),
   headers: {
     "Content-Type": "application/json",
   },
