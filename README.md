@@ -8,7 +8,6 @@ Sistema web de gestión de citas médicas para clínicas y hospitales. Permite a
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Instalación y ejecución local](#instalación-y-ejecución-local)
 - [Roles del sistema](#roles-del-sistema)
-- [Documentación](#documentación)
 
 ## Stack tecnológico
 
