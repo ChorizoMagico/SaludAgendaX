@@ -803,6 +803,10 @@ class CitaViewSet(ModelViewSet):
                     message='No autorizado',
                 )
             data['paciente'] = paciente_propio.id
+            # La EPS no debe venir del navegador: es un dato propio del
+            # paciente autenticado. Además de simplificar el cliente, evita
+            # que un usuario intente agendar contra la EPS de otra persona.
+            data['eps'] = paciente_propio.eps_id
 
         serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
