@@ -359,8 +359,13 @@ class CitaService:
                 estado='CONFIRMADA',
             )
 
-            transaction.on_commit(lambda: cls.enqueue_confirmation_notification(cita.id))
-            transaction.on_commit(lambda: cls.verificar_alerta_tope_eps(attrs['eps'].pk, attrs['fecha']))
+            def after_commit():
+                cls.enqueue_confirmation_notification(cita.id)
+                cls.procesar_notificaciones_pendientes()
+                cls.verificar_alerta_tope_eps(attrs['eps'].pk, attrs['fecha'])
+
+            transaction.on_commit(after_commit)
+
             return cita, alerts
 
     @classmethod
@@ -452,14 +457,19 @@ class CitaService:
                 'fecha', 'hora_inicio', 'hora_fin', 'fecha_hora', 'recordatorio_enviado', 'actualizado_en'
             ])
 
-            transaction.on_commit(
-                lambda: cls.enqueue_reprogramacion_notification(
-                    cita_bloqueada.id, fecha_anterior, hora_inicio_anterior
+            def after_commit():
+                cls.enqueue_reprogramacion_notification(
+                    cita_bloqueada.id,
+                    fecha_anterior,
+                    hora_inicio_anterior
                 )
-            )
-            transaction.on_commit(
-                lambda: cls.verificar_alerta_tope_eps(cita_bloqueada.eps_id, cita_bloqueada.fecha)
-            )
+                cls.procesar_notificaciones_pendientes()
+                cls.verificar_alerta_tope_eps(
+                    cita_bloqueada.eps_id,
+                    cita_bloqueada.fecha
+                )
+
+            transaction.on_commit(after_commit)
 
             return cita_bloqueada, alerts
         
@@ -505,5 +515,164 @@ class CitaService:
             queryset = queryset.filter(estado=estado)
 
         return queryset
-        
     
+    @classmethod
+    def procesar_notificaciones_pendientes(cls):
+        """
+        Procesa todas las notificaciones pendientes y envía los correos.
+        """
+
+        pendientes = NotificacionPendiente.objects.filter(estado="pendiente")
+
+        for notificacion in pendientes:
+            try:
+                payload = notificacion.payload
+                cita = notificacion.cita
+
+
+                asunto = ""
+                mensaje = ""
+
+                if notificacion.tipo == "confirmacion_cita":
+
+                    asunto = "Confirmación de cita médica - SaludAgendaX"
+
+                    mensaje = f"""
+                Hola {cita.paciente.usuario.first_name or cita.paciente.usuario.username},
+
+                Su cita médica ha sido confirmada exitosamente.
+
+                Detalles de la cita:
+
+                Especialidad: {cita.especialidad.nombre}
+                Médico: Dr. {cita.medico.usuario.get_full_name() or cita.medico.usuario.username}
+                Fecha: {cita.fecha.strftime("%d/%m/%Y")}
+                Hora: {cita.hora_inicio.strftime("%H:%M")}
+                EPS: {cita.eps.nombre}
+
+                Motivo de la consulta:
+                {cita.motivo}
+
+                Gracias por utilizar SaludAgendaX.
+                """
+
+                elif notificacion.tipo == "cancelacion_cita":
+                    asunto = "Cancelación de cita médica - SaludAgendaX"
+
+                    mensaje = f"""
+                Hola {cita.paciente.usuario.first_name or cita.paciente.usuario.username},
+
+                Le informamos que su cita médica ha sido cancelada exitosamente.
+
+                Detalles de la cita cancelada:
+
+                Especialidad: {cita.especialidad.nombre}
+                Médico: Dr. {cita.medico.usuario.get_full_name() or cita.medico.usuario.username}
+                Fecha: {cita.fecha.strftime("%d/%m/%Y")}
+                Hora: {cita.hora_inicio.strftime("%H:%M")}
+                EPS: {cita.eps.nombre}
+
+                Motivo de la cancelación:
+                {cita.motivo}
+
+                Si desea una nueva atención médica, puede ingresar nuevamente a SaludAgendaX y agendar otra cita.
+
+                Gracias por utilizar SaludAgendaX.
+                """
+
+                elif notificacion.tipo == "reprogramacion_cita":
+                    asunto = "Reprogramación de cita médica - SaludAgendaX"
+
+                    mensaje = f"""
+                Hola {cita.paciente.usuario.first_name or cita.paciente.usuario.username},
+
+                Le informamos que su cita médica ha sido reprogramada.
+
+                Nuevos detalles de la cita:
+
+                Especialidad: {cita.especialidad.nombre}
+                Médico: Dr. {cita.medico.usuario.get_full_name() or cita.medico.usuario.username}
+                Nueva fecha: {cita.fecha.strftime("%d/%m/%Y")}
+                Nueva hora: {cita.hora_inicio.strftime("%H:%M")}
+                EPS: {cita.eps.nombre}
+
+                Por favor, tenga presente la nueva fecha y hora para asistir a su cita.
+
+                Gracias por utilizar SaludAgendaX.
+                """
+
+                elif notificacion.tipo == "recordatorio_cita":
+                    asunto = "Recordatorio de cita médica - SaludAgendaX"
+
+                    mensaje = f"""
+                Hola {cita.paciente.usuario.first_name or cita.paciente.usuario.username},
+
+                Este es un recordatorio de que mañana tiene una cita médica programada.
+
+                Detalles de la cita:
+
+                Especialidad: {cita.especialidad.nombre}
+                Médico: Dr. {cita.medico.usuario.get_full_name() or cita.medico.usuario.username}
+                Fecha: {cita.fecha.strftime("%d/%m/%Y")}
+                Hora: {cita.hora_inicio.strftime("%H:%M")}
+                EPS: {cita.eps.nombre}
+
+                Le recomendamos llegar con al menos 15 minutos de anticipación.
+
+                Gracias por utilizar SaludAgendaX.
+                """
+
+                send_mail(
+                    asunto,
+                    mensaje,
+                    settings.DEFAULT_FROM_EMAIL,
+                    [payload.get("email_paciente")],
+                    fail_silently=False,
+                )
+
+                notificacion.estado = "enviada"
+
+            except Exception:
+                notificacion.estado = "fallida"
+
+            notificacion.save()
+        
+
+    
+    @classmethod
+    def enqueue_recordatorio_notification(cls, cita_id):
+        cita = Cita.objects.select_related(
+            'paciente__usuario',
+            'medico__usuario'
+        ).get(pk=cita_id)
+
+        NotificacionPendiente.objects.create(
+            tipo='recordatorio_cita',
+            cita=cita,
+            payload={
+                'email_paciente': cita.paciente.usuario.email,
+                'medico_id': cita.medico_id,
+                'fecha': cita.fecha.isoformat() if cita.fecha else None,
+                'hora_inicio': cita.hora_inicio.isoformat() if cita.hora_inicio else None,
+            },
+        )
+
+    
+    @classmethod
+    def generar_recordatorios(cls):
+        ahora = timezone.now()
+
+        limite = ahora + timedelta(hours=24)
+
+        citas = Cita.objects.filter(
+            fecha_hora__date=limite.date(),
+            estado="CONFIRMADA",
+            recordatorio_enviado=False
+        )
+
+        for cita in citas:
+            cls.enqueue_recordatorio_notification(cita.id)
+
+            cita.recordatorio_enviado = True
+            cita.save(update_fields=["recordatorio_enviado"])
+        

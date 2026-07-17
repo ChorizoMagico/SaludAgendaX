@@ -300,9 +300,17 @@ def cancelar_cita(request, cita_id):
     # Cancelar cita
     with transaction.atomic():
         cita.estado = 'CANCELADA'
-        cita.motivo = request.data.get('motivo_cancelacion', 'Cancelación solicitada por paciente')
+        cita.motivo = request.data.get(
+            'motivo_cancelacion',
+            'Cancelación solicitada por paciente'
+        )
         cita.save()
-        transaction.on_commit(lambda: CitaService.enqueue_cancelacion_notification(cita.id))
+
+        def after_commit():
+            CitaService.enqueue_cancelacion_notification(cita.id)
+            CitaService.procesar_notificaciones_pendientes()
+
+        transaction.on_commit(after_commit) 
 
     serializer = CitaCancelacionSerializer(cita)
     return Response({
