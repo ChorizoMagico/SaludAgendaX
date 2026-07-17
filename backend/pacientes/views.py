@@ -772,7 +772,7 @@ class MedicoAdministrativoViewSet(ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        queryset = Medico.objects.select_related('usuario').prefetch_related('especialidades').order_by(
+        queryset = Medico.objects.select_related('usuario', 'sede').prefetch_related('especialidades').order_by(
             'usuario__last_name', 'usuario__first_name'
         )
         busqueda = self.request.query_params.get('search', '').strip()

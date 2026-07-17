@@ -506,8 +506,10 @@ class EspecialidadSerializer(serializers.ModelSerializer):
                 'apellido': medico.usuario.last_name,
                 'registro_medico': medico.registro_medico,
                 'activo': medico.activo,
+                'sede_id': medico.sede_id,
+                'sede': medico.sede.nombre if medico.sede else None,
             }
-            for medico in obj.medicos.select_related('usuario').all()
+            for medico in obj.medicos.select_related('usuario', 'sede').all()
         ]
 
     def validate_nombre(self, value):
@@ -640,12 +642,14 @@ class MedicoAdministrativoSerializer(serializers.ModelSerializer):
         source='especialidades', many=True, queryset=Especialidad.objects.all(), required=False,
     )
     especialidades = EspecialidadSerializer(many=True, read_only=True)
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True)
 
     class Meta:
         model = Medico
         fields = [
             'id', 'email', 'nombres', 'apellidos', 'password', 'registro_medico', 'num_documento',
-            'telefono', 'activo', 'estado', 'motivo_rechazo', 'especialidad_ids', 'especialidades',
+            'telefono', 'sede', 'sede_nombre', 'activo', 'estado', 'motivo_rechazo',
+            'especialidad_ids', 'especialidades',
         ]
         read_only_fields = ['id', 'especialidades']
 
@@ -735,6 +739,8 @@ class CitaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.get_full_name', read_only=True)
     medico_nombre = serializers.CharField(source='medico.usuario.get_full_name', read_only=True)
     especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True)
+    sede = serializers.PrimaryKeyRelatedField(queryset=Sede.objects.filter(activo=True), required=False)
 
     class Meta:
         model = Cita
@@ -747,6 +753,7 @@ class CitaSerializer(serializers.ModelSerializer):
             'hora_inicio',
             'hora_fin',
             'eps',
+            'sede',
             'motivo_consulta',
             'tipo_cita',
             'estado',
@@ -755,6 +762,7 @@ class CitaSerializer(serializers.ModelSerializer):
             'paciente_nombre',
             'medico_nombre',
             'especialidad_nombre',
+            'sede_nombre',
         ]
         read_only_fields = ['id', 'estado', 'notificacion_encolada', 'creado_en']
         extra_kwargs = {
