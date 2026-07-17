@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
 import format from "date-fns/format";
 import parse from "date-fns/parse";
@@ -14,6 +14,9 @@ import "react-big-calendar/lib/css/react-big-calendar.css";
 import { DIAS_SEMANA, getPacientePorId, citasStore, excepcionesStore, DURACION_CITA_MIN } from "../../context/mockData";
 import { TopBar, DashboardNav, DashboardBackground, navMobilePadding, Campo, CampoSolo, DashboardStyles } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
+import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 const TABS = [
   { id: "agenda", label: "Mi agenda", icon: "calendar_month" },
@@ -75,9 +78,29 @@ function rangoChocaConCitaActiva(citasDelMedico, fechaStr, inicioMin, finMin) {
 export default function MedicoMiAgenda() {
   const { user: medico, updateProfile } = useAuth();
   const [tab, setTab] = useState("agenda");
+  const [citasReales, setCitasReales] = useState([]);
+  const [errorApi, setErrorApi] = useState("");
 
   const todasLasCitas = useSyncExternalStore(citasStore.subscribe, citasStore.getSnapshot);
-  const citas = todasLasCitas.filter((c) => c.medicoId === medico.id);
+  useEffect(() => {
+    if (USE_MOCK) return;
+    axiosClient.get("/medicos/mi-agenda/")
+      .then(({ data }) => setCitasReales(data.citas ?? []))
+      .catch((error) => setErrorApi(extraerMensajeError(error, "No fue posible cargar tu agenda.")));
+  }, []);
+
+  const citas = USE_MOCK
+    ? todasLasCitas.filter((c) => c.medicoId === medico.id)
+    : citasReales.map((cita) => ({
+        id: cita.id,
+        fecha: cita.fecha,
+        hora: cita.hora_inicio?.slice(0, 5),
+        horaFin: cita.hora_fin?.slice(0, 5),
+        estado: cita.estado === "CANCELADA" ? "cancelada" : "agendada",
+        motivo: cita.motivo,
+        especialidad: cita.especialidad_nombre,
+        pacienteNombre: cita.paciente_nombre || "Paciente",
+      }));
 
   // Excepciones ahora viven en un store compartido (excepcionesStore) en
   // vez de estado local: así el panel administrativo (TabCitas) también
@@ -108,7 +131,7 @@ export default function MedicoMiAgenda() {
         const inicio = combinarFechaYHora(new Date(`${c.fecha}T00:00:00`), c.hora);
         return {
           id: c.id,
-          title: `${nombrePaciente(c.pacienteId)} — ${c.motivo || c.especialidad}`,
+          title: `${c.pacienteNombre ?? nombrePaciente(c.pacienteId)} — ${c.motivo || c.especialidad}`,
           start: inicio,
           end: addMinutes(inicio, DURACION_CITA_MIN),
           resource: c,
@@ -316,6 +339,7 @@ export default function MedicoMiAgenda() {
         <DashboardNav tabs={TABS} activo={tab} onChange={setTab} />
 
         <main className="flex-1 min-w-0">
+          {errorApi && <p className="mb-4 text-sm text-[#BA1A1A] bg-[#FFDAD6] px-3 py-2 rounded-lg">{errorApi}</p>}
           {/* ---------------- MI AGENDA ---------------- */}
           {tab === "agenda" && (
             <div className="flex flex-col lg:flex-row gap-6">
