@@ -1,7 +1,10 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { getMedicos, getMedicoPorId, getPacientePorId, citasStore } from "../../context/mockData";
 import { TopBar, DashboardNav, DashboardBackground, navMobilePadding, EstadoBadge, DashboardStyles } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
+import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 import TabCitas from "./AdminCitas";
 import { TabMedicos, TabEspecialidades } from "./AdminMedicosEspecialidades";
@@ -92,8 +95,25 @@ export function FilaCitaResumen({ cita }) {
 export default function AdminDashboard() {
   const { user: admin } = useAuth();
   const [tab, setTab] = useState("inicio");
+  const [citasReales, setCitasReales] = useState([]);
+  const [errorApi, setErrorApi] = useState("");
 
   const todasLasCitas = useSyncExternalStore(citasStore.subscribe, citasStore.getSnapshot);
+  useEffect(() => {
+    if (USE_MOCK) return;
+    axiosClient.get("/citas/", { params: { page_size: 100 } })
+      .then(({ data }) => setCitasReales(data.results ?? data))
+      .catch((error) => setErrorApi(extraerMensajeError(error, "No fue posible cargar las citas.")));
+  }, []);
+  const citas = USE_MOCK ? todasLasCitas : citasReales.map((cita) => ({
+    id: cita.id,
+    fecha: cita.fecha,
+    hora: cita.hora_inicio?.slice(0, 5),
+    estado: cita.estado === "CANCELADA" ? "cancelada" : "agendada",
+    especialidad: cita.especialidad_nombre,
+    pacienteNombre: cita.paciente_nombre || "Paciente",
+    medicoNombre: cita.medico_nombre || "Médico",
+  }));
 
   return (
     <div className="min-h-screen bg-[#FBFDFC] text-[#1A2624]">
@@ -105,12 +125,13 @@ export default function AdminDashboard() {
         <DashboardNav tabs={TABS} activo={tab} onChange={setTab} />
 
         <main className="flex-1 min-w-0">
-          {tab === "inicio" && <TabInicio todasLasCitas={todasLasCitas} onIrACitas={() => setTab("citas")} />}
-          {tab === "citas" && <TabCitas todasLasCitas={todasLasCitas} />}
-          {tab === "medicos" && <TabMedicos todasLasCitas={todasLasCitas} />}
+          {errorApi && <p className="mb-4 text-sm text-[#BA1A1A] bg-[#FFDAD6] px-3 py-2 rounded-lg">{errorApi}</p>}
+          {tab === "inicio" && <TabInicio todasLasCitas={citas} onIrACitas={() => setTab("citas")} />}
+          {tab === "citas" && <TabCitas todasLasCitas={citas} />}
+          {tab === "medicos" && <TabMedicos todasLasCitas={citas} />}
           {tab === "especialidades" && <TabEspecialidades />}
-          {tab === "pacientes" && <TabPacientes todasLasCitas={todasLasCitas} />}
-          {tab === "reportes" && <TabReportes todasLasCitas={todasLasCitas} />}
+          {tab === "pacientes" && <TabPacientes todasLasCitas={citas} />}
+          {tab === "reportes" && <TabReportes todasLasCitas={citas} />}
         </main>
       </div>
     </div>

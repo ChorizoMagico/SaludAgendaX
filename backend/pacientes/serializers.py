@@ -571,6 +571,9 @@ class HorarioMedicoSerializer(serializers.ModelSerializer):
 
 class CitaSerializer(serializers.ModelSerializer):
     motivo_consulta = serializers.CharField(source='motivo', required=True)
+    paciente_nombre = serializers.CharField(source='paciente.usuario.get_full_name', read_only=True)
+    medico_nombre = serializers.CharField(source='medico.usuario.get_full_name', read_only=True)
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
 
     class Meta:
         model = Cita
@@ -588,6 +591,9 @@ class CitaSerializer(serializers.ModelSerializer):
             'estado',
             'notificacion_encolada',
             'creado_en',
+            'paciente_nombre',
+            'medico_nombre',
+            'especialidad_nombre',
         ]
         read_only_fields = ['id', 'estado', 'notificacion_encolada', 'creado_en']
         extra_kwargs = {
@@ -616,6 +622,7 @@ class CitaSerializer(serializers.ModelSerializer):
 class AgendaMedicoSerializer(serializers.ModelSerializer):
     medico_nombre = serializers.CharField(source="medico.usuario.get_full_name", read_only=True)
     especialidad_nombre = serializers.CharField(source="especialidad.nombre", read_only=True)
+    paciente_nombre = serializers.CharField(source="paciente.usuario.get_full_name", read_only=True)
 
     class Meta:
         model = Cita
@@ -628,6 +635,7 @@ class AgendaMedicoSerializer(serializers.ModelSerializer):
             "motivo",
             "medico_nombre",
             "especialidad_nombre",
+            "paciente_nombre",
         ]
 
 
