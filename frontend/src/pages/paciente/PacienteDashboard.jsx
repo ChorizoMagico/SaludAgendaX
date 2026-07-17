@@ -76,6 +76,27 @@ function sumarMinutos(hora, minutos) {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
+// Los ViewSets de DRF pueden devolver una lista directa (cuando no hay
+// paginación) o { results: [...] } (cuando la hay). Nunca guardamos el
+// objeto completo en estado: el resto del componente siempre trabaja con
+// arreglos.
+function comoLista(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.citas)) return data.citas;
+  return [];
+}
+
+function estadoCitaApi(estado) {
+  const estados = {
+    PENDIENTE: "agendada",
+    CONFIRMADA: "agendada",
+    CANCELADA: "cancelada",
+    COMPLETADA: "completada",
+  };
+  return estados[estado] ?? "agendada";
+}
+
 export default function PacienteDashboard() {
   const { user: paciente, updateProfile } = useAuth();
   const [tab, setTab] = useState("inicio");
@@ -91,7 +112,7 @@ export default function PacienteDashboard() {
   const todasLasCitas = useSyncExternalStore(citasStore.subscribe, citasStore.getSnapshot);
   const cargarCitasReales = async () => {
     const { data } = await axiosClient.get("/citas/", { params: { page_size: 100 } });
-    setCitasReales(data.results ?? data);
+    setCitasReales(comoLista(data));
   };
 
   useEffect(() => {
@@ -103,34 +124,41 @@ export default function PacienteDashboard() {
     ])
       .then(([especialidades, citasApi]) => {
         if (!activo) return;
-        setCatalogo(especialidades.data ?? []);
-        setCitasReales(citasApi.data.results ?? citasApi.data);
+        setCatalogo(comoLista(especialidades.data));
+        setCitasReales(comoLista(citasApi.data));
       })
       .catch((error) => activo && setErrorDatos(extraerMensajeError(error, "No fue posible cargar tus citas.")))
       .finally(() => activo && setCargandoDatos(false));
     return () => { activo = false; };
   }, []);
 
-  const medicosReales = useMemo(
-    () => catalogo.flatMap((especialidad) => (especialidad.medicos ?? []).map((medico) => ({
-      ...medico,
-      especialidadId: especialidad.id,
-      especialidad: especialidad.nombre,
-    }))),
-    [catalogo]
-  );
+  const medicosReales = useMemo(() => {
+    const medicos = [];
+    for (const especialidad of catalogo) {
+      for (const medico of Array.isArray(especialidad.medicos) ? especialidad.medicos : []) {
+        medicos.push({
+          ...medico,
+          especialidadId: especialidad.id,
+          especialidad: especialidad.nombre,
+        });
+      }
+    }
+    return medicos;
+  }, [catalogo]);
   const especialidades = USE_MOCK ? ESPECIALIDADES : catalogo.map((especialidad) => especialidad.nombre);
   const citas = USE_MOCK
     ? todasLasCitas.filter((c) => c.pacienteId === paciente.id)
     : citasReales.map((cita) => ({
         id: cita.id,
         medicoId: cita.medico,
-        especialidad: catalogo.find((especialidad) => especialidad.id === cita.especialidad)?.nombre ?? "Especialidad",
-        sede: "Sede por confirmar",
+        especialidad: cita.especialidad_nombre ?? catalogo.find((especialidad) => especialidad.id === cita.especialidad)?.nombre ?? "Especialidad",
+        // La API actual no modela sedes para médicos ni citas. No se debe
+        // inventar una sede de mock ni usarla para filtrar la disponibilidad.
+        sede: "No especificada",
         fecha: cita.fecha,
         hora: cita.hora_inicio?.slice(0, 5),
-        estado: cita.estado === "CANCELADA" ? "cancelada" : "agendada",
-        motivo: cita.motivo_consulta ?? "",
+        estado: estadoCitaApi(cita.estado),
+        motivo: cita.motivo_consulta ?? cita.motivo ?? "",
       }));
 
   // ---------- Estado del wizard de agendamiento/reprogramación ----------
@@ -163,7 +191,7 @@ export default function PacienteDashboard() {
 
   const sedesConMedico = USE_MOCK
     ? SEDES.filter((sede) => getMedicosDisponibles().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede))
-    : ["Sede por confirmar"];
+    : ["No especificada"];
 
   const medicoElegido = wizardMedicoId
     ? (USE_MOCK ? getMedicoPorId(wizardMedicoId) : medicosReales.find((m) => m.id === wizardMedicoId))
@@ -340,7 +368,7 @@ export default function PacienteDashboard() {
             fecha: wizardFecha,
             hora_inicio: `${wizardFranja}:00`,
             hora_fin: `${sumarMinutos(wizardFranja, 30)}:00`,
-            motivo_consulta: wizardMotivo,
+            motivo_consulta: wizardMotivo.trim(),
             tipo_cita: "consulta_general",
           });
         }
@@ -537,7 +565,7 @@ export default function PacienteDashboard() {
                         seleccionado={wizardEspecialidad === esp}
                         onClick={() => {
                           setWizardEspecialidad(esp);
-                          setWizardSede(USE_MOCK ? "" : "Sede por confirmar");
+                          setWizardSede(USE_MOCK ? "" : "No especificada");
                           setWizardMedicoId(null);
                         }}
                         icon="medical_information"
@@ -647,7 +675,7 @@ export default function PacienteDashboard() {
                     </div>
                   )}
 
-                  <label className="text-sm font-semibold text-[#0F3D3E] mt-2">Motivo de consulta (opcional)</label>
+                  <label className="text-sm font-semibold text-[#0F3D3E] mt-2">Motivo de consulta</label>
                   <textarea
                     value={wizardMotivo}
                     onChange={(e) => setWizardMotivo(e.target.value)}
@@ -657,7 +685,7 @@ export default function PacienteDashboard() {
                   />
 
                   <div className="flex items-center gap-4 mt-2">
-                    <BotonContinuar disabled={!wizardFecha || !wizardFranja} onClick={() => setWizardPaso(5)} />
+                    <BotonContinuar disabled={!wizardFecha || !wizardFranja || !wizardMotivo.trim()} onClick={() => setWizardPaso(5)} />
                     <button onClick={() => { setWizardMensaje(""); setWizardPaso(3); }} className="text-sm text-[#48605C] hover:underline">
                       ← Cambiar médico
                     </button>
