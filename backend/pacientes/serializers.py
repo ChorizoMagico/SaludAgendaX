@@ -25,7 +25,7 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
-    eps_id = serializers.IntegerField(required=False)
+    eps_id = serializers.IntegerField(required=False, allow_null=True)
     # NOTA (conexion FE-BE): el frontend recoge nombres/apellidos en el
     # formulario de registro, pero antes se perdian porque no existian en
     # este serializer. Se agregan aqui como write-only y se mapean a
