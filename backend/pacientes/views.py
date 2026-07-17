@@ -127,6 +127,9 @@ def registro_administrativo(request):
         }, status=status.HTTP_201_CREATED)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PacienteLoginView(TokenObtainPairView):
     """
     Endpoint de login para pacientes
     POST /api/pacientes/login
