@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   topesEpsStore,
   citasStore,
@@ -6,8 +6,13 @@ import {
   alertasRevisadasStore,
   alertaFueRevisada,
 } from "../../context/mockData";
+import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 export default function AlertasTopes({ onIrATopes }) {
+  const [alertasReales, setAlertasReales] = useState([]);
+  const [errorApi, setErrorApi] = useState("");
   // Suscripciones puramente reactivas: el % de uso depende tanto de los
   // topes configurados como de las citas registradas, así que este
   // componente se debe re-renderizar si cualquiera de los dos cambia.
@@ -18,7 +23,23 @@ export default function AlertasTopes({ onIrATopes }) {
   // para que "marcar revisada" persista aunque se salga de esta pantalla.
   const revisadas = useSyncExternalStore(alertasRevisadasStore.subscribe, alertasRevisadasStore.getSnapshot);
 
-  const alertas = getAlertasTopes().filter((a) => !alertaFueRevisada(a.id, a.uso.porcentaje, revisadas));
+  useEffect(() => {
+    if (USE_MOCK) return;
+    axiosClient.get("/alertas-topes/")
+      .then(({ data }) => setAlertasReales((data.alertas ?? []).map((alerta) => ({
+        id: alerta.id,
+        eps: alerta.eps_nombre,
+        especialidad: null,
+        periodo: `${alerta.periodo_inicio} - ${alerta.periodo_fin}`,
+        maxCitas: null,
+        presupuestoMax: null,
+        uso: { porcentaje: Math.round(Number(alerta.porcentaje_uso)), usadas: null, gastado: null },
+      }))))
+      .catch((error) => setErrorApi(extraerMensajeError(error, "No fue posible cargar las alertas.")));
+  }, []);
+
+  const alertasFuente = USE_MOCK ? getAlertasTopes() : alertasReales;
+  const alertas = alertasFuente.filter((a) => !alertaFueRevisada(a.id, a.uso.porcentaje, revisadas));
 
   function marcarRevisada(id, porcentajeActual) {
     alertasRevisadasStore.marcar(id, porcentajeActual);
@@ -41,6 +62,7 @@ export default function AlertasTopes({ onIrATopes }) {
           Topes de EPS que alcanzaron el 80% o más de su uso en el período actual.
         </p>
       </div>
+      {errorApi && <p className="mb-4 text-sm text-[#BA1A1A] bg-[#FFDAD6] px-3 py-2 rounded-lg">{errorApi}</p>}
 
       {alertas.length === 0 ? (
         <div className="bg-white border border-[#DCE8E5] rounded-2xl p-10 text-center">
@@ -73,7 +95,7 @@ export default function AlertasTopes({ onIrATopes }) {
                         </span>
                       </div>
                       <p className="text-sm text-[#48605C] mt-1">
-                        {a.uso.usadas} de {a.maxCitas} citas usadas ({a.periodo})
+                        {a.uso.usadas != null ? `${a.uso.usadas} de ${a.maxCitas} citas usadas` : "Alerta registrada"} ({a.periodo})
                         {a.presupuestoMax != null && a.uso.gastado != null &&
                           ` · $${a.uso.gastado.toLocaleString("es-CO")} de $${a.presupuestoMax.toLocaleString("es-CO")}`}
                       </p>

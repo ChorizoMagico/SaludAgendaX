@@ -2,11 +2,13 @@ from rest_framework import serializers, status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from rest_framework_simplejwt.views import TokenObtainPairView
 from datetime import datetime, timedelta
 from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
+from django.core.mail import send_mail
+from django.conf import settings
 from rest_framework.views import APIView
 from django.db.models import Count, Q
 from django.db import transaction
@@ -15,6 +17,8 @@ from django.db import transaction
 from .serializers import (
     PacienteRegistroSerializer, 
     PacienteTokenSerializer,
+    MedicoRegistroSerializer,
+    AdministrativoRegistroSerializer,
     RecuperarContraseniaSerializer, 
     ResetContraseniaSerializer,
     PacientePerfilSerializer,
@@ -28,13 +32,24 @@ from .serializers import (
     FeriadoSerializer,
     ConfiguracionGlobalSerializer,
     EPSSerializer,
+    PacienteAdministrativoSerializer,
+    MedicoAdministrativoSerializer,
+    TopeEPSSerializer,
+    RestriccionFrecuenciaSerializer,
+    ExcepcionMedicoSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
-from .models import Cita, Especialidad, Paciente, Medico, HorarioMedico, AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal, EPS
+from .models import (
+    Cita, Especialidad, Paciente, Medico, Administrativo, HorarioMedico,
+    AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal, EPS, TopeEPS, ExcepcionMedico,
+)
 from .services import CitaService
-from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsSuperAdministrativeUser
+from .permissions import (
+    IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsAdministrativeOnlyUser,
+    IsSuperAdministrativeUser,
+)
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
@@ -69,6 +84,56 @@ def registro_paciente(request):
             'user': _user_payload(paciente.usuario),
         }, status=status.HTTP_201_CREATED)
     
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def registro_medico(request):
+    """
+    Autorregistro de médico (punto 1: login/registro de médico).
+    POST /api/medicos/registro/
+
+    A diferencia de /pacientes/registro/, esta cuenta NO devuelve tokens ni
+    queda con sesión activa: nace 'pendiente' y bloqueada
+    (User.is_active=False) hasta que un superadministrador la apruebe desde
+    /api/solicitudes-pendientes/ (ver AprobarSolicitudView).
+    """
+    serializer = MedicoRegistroSerializer(data=request.data)
+
+    if serializer.is_valid():
+        medico = serializer.save()
+        return Response({
+            'mensaje': 'Registro recibido. Tu cuenta debe ser autorizada por un superadministrador antes de poder ingresar.',
+            'pendiente': True,
+            'medico_id': medico.id,
+            'email': medico.usuario.email,
+        }, status=status.HTTP_201_CREATED)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def registro_administrativo(request):
+    """
+    Autorregistro de personal administrativo (punto 1).
+    POST /api/administrativos/registro/
+
+    Mismo comportamiento que registro_medico: no hay sesión automática, la
+    cuenta queda 'pendiente' hasta que un superadministrador la apruebe.
+    """
+    serializer = AdministrativoRegistroSerializer(data=request.data)
+
+    if serializer.is_valid():
+        administrativo = serializer.save()
+        return Response({
+            'mensaje': 'Registro recibido. Tu cuenta debe ser autorizada por un superadministrador antes de poder ingresar.',
+            'pendiente': True,
+            'administrativo_id': administrativo.id,
+            'email': administrativo.usuario.email,
+        }, status=status.HTTP_201_CREATED)
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -667,6 +732,115 @@ class HorarioMedicoViewSet(ModelViewSet):
     ]
 
 
+class PacienteAdministrativoViewSet(ModelViewSet):
+    """CRUD administrativo; DELETE desactiva la cuenta para conservar el historial."""
+
+    serializer_class = PacienteAdministrativoSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeOnlyUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Paciente.objects.select_related('usuario', 'eps').order_by('usuario__last_name', 'usuario__first_name')
+        busqueda = self.request.query_params.get('search', '').strip()
+        if busqueda:
+            queryset = queryset.filter(
+                Q(num_documento__icontains=busqueda)
+                | Q(usuario__first_name__icontains=busqueda)
+                | Q(usuario__last_name__icontains=busqueda)
+                | Q(usuario__email__icontains=busqueda)
+            )
+        return queryset
+
+    def perform_destroy(self, instance):
+        instance.usuario.is_active = False
+        instance.usuario.save(update_fields=['is_active'])
+
+
+class MedicoAdministrativoViewSet(ModelViewSet):
+    """CRUD administrativo de médicos; DELETE es una desactivación lógica."""
+
+    serializer_class = MedicoAdministrativoSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeOnlyUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Medico.objects.select_related('usuario').prefetch_related('especialidades').order_by(
+            'usuario__last_name', 'usuario__first_name'
+        )
+        busqueda = self.request.query_params.get('search', '').strip()
+        if busqueda:
+            queryset = queryset.filter(
+                Q(registro_medico__icontains=busqueda)
+                | Q(num_documento__icontains=busqueda)
+                | Q(usuario__first_name__icontains=busqueda)
+                | Q(usuario__last_name__icontains=busqueda)
+                | Q(usuario__email__icontains=busqueda)
+            ).distinct()
+        return queryset
+
+    def perform_destroy(self, instance):
+        instance.activo = False
+        instance.save(update_fields=['activo'])
+        instance.usuario.is_active = False
+        instance.usuario.save(update_fields=['is_active'])
+
+
+class TopeEPSViewSet(ModelViewSet):
+    """Configuración de topes y presupuesto por EPS."""
+
+    serializer_class = TopeEPSSerializer
+    queryset = TopeEPS.objects.select_related('eps').order_by('eps__nombre')
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+
+class RestriccionFrecuenciaViewSet(ModelViewSet):
+    """Configuración del intervalo mínimo entre citas por especialidad."""
+
+    serializer_class = RestriccionFrecuenciaSerializer
+    queryset = Especialidad.objects.order_by('nombre')
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+    http_method_names = ['get', 'put', 'patch', 'head', 'options']
+    pagination_class = None
+
+
+class ExcepcionMedicoViewSet(ModelViewSet):
+    """Excepciones puntuales de disponibilidad. Administración ve todas; cada médico gestiona las propias."""
+
+    serializer_class = ExcepcionMedicoSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+    def _medico_del_usuario(self):
+        return Medico.objects.filter(usuario=self.request.user).first()
+
+    def get_queryset(self):
+        queryset = ExcepcionMedico.objects.select_related('medico__usuario').order_by('fecha', 'hora_inicio', 'id')
+        if IsAdministrativeUser.is_admin_user(self.request.user):
+            medico_id = self.request.query_params.get('medico')
+            return queryset.filter(medico_id=medico_id) if medico_id else queryset
+        medico = self._medico_del_usuario()
+        return queryset.filter(medico=medico) if medico else queryset.none()
+
+    def perform_create(self, serializer):
+        if IsAdministrativeUser.is_admin_user(self.request.user):
+            serializer.save()
+            return
+        medico = self._medico_del_usuario()
+        if not medico:
+            raise serializers.ValidationError({'detail': 'Solo un médico puede registrar sus excepciones.'})
+        serializer.save(medico=medico)
+
+
 class CitaPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = "page_size"
@@ -754,6 +928,10 @@ class CitaViewSet(ModelViewSet):
                     message='No autorizado',
                 )
             data['paciente'] = paciente_propio.id
+            # La EPS no debe venir del navegador: es un dato propio del
+            # paciente autenticado. Además de simplificar el cliente, evita
+            # que un usuario intente agendar contra la EPS de otra persona.
+            data['eps'] = paciente_propio.eps_id
 
         serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
@@ -953,3 +1131,162 @@ class ConfiguracionGlobalView(APIView):
             )
         serializer.save()
         return Response({'status': 'success', 'code': 200, 'data': serializer.data})
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Punto 1 — Solicitudes de registro (autorización de médico/administrativo)
+#
+# Un médico o administrativo autorregistrado queda 'pendiente' hasta que un
+# superadministrador lo revisa desde esta pantalla (SolicitudesPendientes.jsx
+# en el frontend, hoy conectada a mockData). `solicitud_id` identifica la
+# solicitud como "<rol>:<pk>" (ej. "medico:7") porque Medico y Administrativo
+# son tablas distintas y sus ids se pisan entre sí.
+# ─────────────────────────────────────────────────────────────────────────
+
+_MODELOS_SOLICITUD = {'medico': Medico, 'administrativo': Administrativo}
+
+
+def _solicitud_a_dict(rol, obj):
+    return {
+        'id': f'{rol}:{obj.id}',
+        'rol': rol,
+        'nombre': obj.usuario.first_name,
+        'apellido': obj.usuario.last_name,
+        'correo': obj.usuario.email,
+        'cedula': obj.num_documento,
+        'telefono': obj.telefono,
+        'especialidades': (
+            list(obj.especialidades.values_list('nombre', flat=True)) if rol == 'medico' else None
+        ),
+        'numeroRegistro': getattr(obj, 'registro_medico', None),
+        'sede': None,  # Medico todavía no tiene relación con Sede (ver punto 4).
+    }
+
+
+def _resolver_solicitud(solicitud_id):
+    """'medico:3' -> instancia Medico(pk=3) / 'administrativo:5' -> instancia
+    Administrativo(pk=5). (None, None) si el formato o el rol no son válidos."""
+    try:
+        rol, pk = solicitud_id.split(':', 1)
+        pk = int(pk)
+    except (ValueError, AttributeError):
+        return None, None
+
+    Modelo = _MODELOS_SOLICITUD.get(rol)
+    if not Modelo:
+        return None, None
+
+    instancia = Modelo.objects.select_related('usuario').filter(pk=pk).first()
+    return Modelo, instancia
+
+
+def _notificar_resultado_solicitud(instancia, aprobada):
+    """Email best-effort avisando el resultado; nunca debe tumbar la
+    petición si el envío falla (mismo criterio que el resto del proyecto:
+    EMAIL_BACKEND por defecto solo imprime en consola en desarrollo)."""
+    asunto = 'Tu cuenta de SaludAgendaX fue aprobada' if aprobada else 'Tu solicitud de cuenta fue rechazada'
+    if aprobada:
+        cuerpo = f"Hola {instancia.usuario.first_name}, tu cuenta ya está activa. Ya puedes iniciar sesión en SaludAgendaX."
+    else:
+        motivo = instancia.motivo_rechazo or 'No se indicó un motivo.'
+        cuerpo = f"Hola {instancia.usuario.first_name}, tu solicitud de cuenta fue rechazada. Motivo: {motivo}"
+    try:
+        send_mail(asunto, cuerpo, settings.DEFAULT_FROM_EMAIL, [instancia.usuario.email], fail_silently=True)
+    except Exception:
+        pass
+
+
+class SolicitudesPendientesListView(APIView):
+    """
+    GET /api/solicitudes-pendientes/
+
+    Lista las cuentas de médico/administrativo autorregistradas que están
+    a la espera de aprobación de un superadministrador.
+    """
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+
+    def get(self, request):
+        medicos = (
+            Medico.objects.filter(estado='pendiente')
+            .select_related('usuario')
+            .prefetch_related('especialidades')
+        )
+        administrativos = Administrativo.objects.filter(estado='pendiente').select_related('usuario')
+
+        solicitudes = (
+            [_solicitud_a_dict('medico', m) for m in medicos]
+            + [_solicitud_a_dict('administrativo', a) for a in administrativos]
+        )
+
+        return Response({'total': len(solicitudes), 'solicitudes': solicitudes})
+
+
+class AprobarSolicitudView(APIView):
+    """POST /api/solicitudes-pendientes/<solicitud_id>/aprobar/
+
+    Activa la cuenta: estado='aprobado', activo=True y User.is_active=True
+    (sin esto último el usuario seguiría sin poder loguearse). Si es un
+    administrativo, además lo agrega al grupo 'administrativo' Django, que
+    es lo que usan los permisos (IsAdministrativeUser) para reconocerlo.
+    """
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+
+    def post(self, request, solicitud_id):
+        Modelo, instancia = _resolver_solicitud(solicitud_id)
+        if not instancia:
+            return Response({'error': 'Solicitud no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        if instancia.estado != 'pendiente':
+            return Response(
+                {'error': 'Esa solicitud ya no está pendiente.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        instancia.estado = 'aprobado'
+        instancia.activo = True
+        instancia.motivo_rechazo = ''
+        instancia.save(update_fields=['estado', 'activo', 'motivo_rechazo'])
+
+        instancia.usuario.is_active = True
+        instancia.usuario.save(update_fields=['is_active'])
+
+        if Modelo is Administrativo:
+            grupo, _created = Group.objects.get_or_create(name='administrativo')
+            instancia.usuario.groups.add(grupo)
+
+        _notificar_resultado_solicitud(instancia, aprobada=True)
+
+        return Response({'mensaje': 'Solicitud aprobada exitosamente'})
+
+
+class RechazarSolicitudView(APIView):
+    """POST /api/solicitudes-pendientes/<solicitud_id>/rechazar/
+
+    Body opcional: { "motivo": "..." }
+
+    Deja la cuenta en estado='rechazado', activo=False y
+    User.is_active=False (no se elimina: queda historial de la solicitud).
+    """
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+
+    def post(self, request, solicitud_id):
+        Modelo, instancia = _resolver_solicitud(solicitud_id)
+        if not instancia:
+            return Response({'error': 'Solicitud no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        if instancia.estado != 'pendiente':
+            return Response(
+                {'error': 'Esa solicitud ya no está pendiente.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        instancia.estado = 'rechazado'
+        instancia.activo = False
+        instancia.motivo_rechazo = request.data.get('motivo', '') or ''
+        instancia.save(update_fields=['estado', 'activo', 'motivo_rechazo'])
+
+        instancia.usuario.is_active = False
+        instancia.usuario.save(update_fields=['is_active'])
+
+        _notificar_resultado_solicitud(instancia, aprobada=False)
+
+        return Response({'mensaje': 'Solicitud rechazada'})

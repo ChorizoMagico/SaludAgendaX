@@ -19,8 +19,95 @@ from .models import (
     Paciente,
     Sede,
     TopeEPS,
+    ExcepcionMedico,
 )
 from .notificaciones import enviar_notificaciones_pendientes
+
+
+class EndpointsAdministracionPendientesTests(APITestCase):
+    """Cobertura de los endpoints que conectan los módulos administrativos con el backend."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='admin-crud@example.com', email='admin-crud@example.com', password='Password123!', is_staff=True,
+        )
+        self.superadmin = User.objects.create_superuser(
+            username='super-crud@example.com', email='super-crud@example.com', password='Password123!',
+        )
+        self.eps = EPS.objects.create(nombre='EPS CRUD', codigo='CRUD-01', activo=True)
+        self.especialidad = Especialidad.objects.create(
+            nombre='Medicina interna CRUD', descripcion='Pruebas', dias_entre_citas=7,
+        )
+        medico_user = User.objects.create_user(
+            username='medico-crud@example.com', email='medico-crud@example.com', password='Password123!',
+            first_name='Marta', last_name='Medica',
+        )
+        self.medico = Medico.objects.create(
+            usuario=medico_user, registro_medico='RM-CRUD', num_documento='90001', activo=True, estado='aprobado',
+        )
+        self.medico.especialidades.add(self.especialidad)
+
+    def test_administrativo_gestiona_paciente_y_desactivacion_conserva_registro(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.post(reverse('paciente-administrativo-list'), {
+            'email': 'paciente-crud@example.com', 'password': 'Password123!', 'nombres': 'Paula',
+            'apellidos': 'Paciente', 'tipo_documento': 'CC', 'num_documento': '80001',
+            'fecha_nacimiento': '1990-01-01', 'eps': self.eps.id, 'direccion': 'Calle 1', 'telefono': '3000000000',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        paciente_id = response.data['id']
+
+        response = self.client.patch(
+            reverse('paciente-administrativo-detail', args=[paciente_id]), {'telefono': '3111111111'}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['telefono'], '3111111111')
+
+        response = self.client.delete(reverse('paciente-administrativo-detail', args=[paciente_id]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Paciente.objects.get(pk=paciente_id).usuario.is_active)
+
+    def test_administrativo_gestiona_medico_y_no_autorizado_es_rechazado(self):
+        normal = User.objects.create_user('normal-crud@example.com', 'normal-crud@example.com', 'Password123!')
+        self.client.force_authenticate(user=normal)
+        response = self.client.get(reverse('medico-administrativo-list'))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            reverse('medico-administrativo-detail', args=[self.medico.id]),
+            {'activo': False, 'especialidad_ids': [self.especialidad.id]}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['activo'])
+
+    def test_superadmin_configura_tope_y_restriccion_de_frecuencia(self):
+        self.client.force_authenticate(user=self.superadmin)
+        response = self.client.post(reverse('tope-eps-list'), {
+            'eps': self.eps.id, 'limite_citas': 20, 'tipo_periodo': 'MENSUAL', 'presupuesto_maximo': '15.00',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['eps_nombre'], self.eps.nombre)
+
+        response = self.client.patch(
+            reverse('restriccion-frecuencia-detail', args=[self.especialidad.id]), {'dias_entre_citas': 14}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['dias_entre_citas'], 14)
+
+    def test_medico_solo_gestiona_sus_excepciones_y_se_validan_las_horas(self):
+        self.client.force_authenticate(user=self.medico.usuario)
+        response = self.client.post(reverse('excepcion-medico-list'), {
+            'medico': self.medico.id, 'fecha': '2030-01-01', 'hora_inicio': '13:00:00', 'hora_fin': '12:00:00',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.post(reverse('excepcion-medico-list'), {
+            'fecha': '2030-01-01', 'motivo': 'Vacaciones',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['medico'], self.medico.id)
+        self.assertTrue(ExcepcionMedico.objects.filter(pk=response.data['id'], medico=self.medico).exists())
 
 
 class EspecialidadEndpointTests(APITestCase):
@@ -270,6 +357,51 @@ class CitasEndpointTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('paciente', response.data['errors'])
 
+    def test_full_flow_medico_especialidad_relationship(self):
+        """
+        HU-005: Creación de especialidad con médico asignado y posterior agendamiento de cita.
+        Verifica la relación Especialidad <-> Medico en el flujo completo.
+        """
+        # El administrador crea una especialidad y asigna el médico.
+        self.client.force_authenticate(user=self.admin_user)
+        create_response = self.client.post(
+            reverse('especialidad-list'),
+            {
+                'nombre': 'Reumatologia',
+                'descripcion': 'Dolores articulares',
+                'activo': True,
+                'medico_ids': [self.medico.id],
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        especialidad_id = create_response.data['id']
+        especialidad = Especialidad.objects.get(pk=especialidad_id)
+        self.assertTrue(especialidad.medicos.filter(pk=self.medico.id).exists())
+
+        # Verificar que la API devuelve la especialidad con el médico asignado.
+        detail_response = self.client.get(reverse('especialidad-detail', args=[especialidad_id]))
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data['nombre'], 'Reumatologia')
+        self.assertEqual(len(detail_response.data['medicos']), 1)
+        self.assertEqual(detail_response.data['medicos'][0]['id'], self.medico.id)
+
+        # Luego el paciente crea una cita con ese médico y especialidad.
+        self.client.force_authenticate(user=self.paciente_user)
+        appointment_payload = self._payload(especialidad=especialidad_id)
+        appointment_response = self.client.post(self.url, appointment_payload, format='json')
+
+        self.assertEqual(appointment_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(appointment_response.data['status'], 'success')
+        self.assertEqual(appointment_response.data['data']['especialidad'], especialidad_id)
+        self.assertEqual(appointment_response.data['data']['medico'], self.medico.id)
+
+        cita = Cita.objects.get(pk=appointment_response.data['data']['id'])
+        self.assertTrue(cita.medico.especialidades.filter(pk=especialidad_id).exists())
+        self.assertEqual(cita.especialidad.id, especialidad_id)
+        self.assertEqual(cita.paciente.id, self.paciente.id)
+
     def test_crea_cita_exitosa_y_encola_notificacion(self):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post(self.url, self._payload(), format='json')
@@ -385,6 +517,109 @@ class CitaCreacionAdministrativaTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('medico', response.data['errors'])
+
+
+class CancelacionCitaTests(APITestCase):
+    """HU-010: cancelación de citas libera cupos y vuelve a quedar disponible."""
+
+    def setUp(self):
+        self.eps = EPS.objects.create(nombre='EPS Cancelacion', codigo='EPS005', activo=True)
+        self.paciente_user = User.objects.create_user(
+            username='pacienteCancel@saludagendax.com',
+            email='pacienteCancel@saludagendax.com',
+            password='Password123!',
+        )
+        self.paciente = Paciente.objects.create(
+            usuario=self.paciente_user,
+            tipo_documento='CC',
+            num_documento='666666666',
+            fecha_nacimiento='1990-01-01',
+            eps=self.eps,
+            direccion='Calle 6',
+        )
+        self.medico_user = User.objects.create_user(
+            username='medicoCancel@saludagendax.com',
+            email='medicoCancel@saludagendax.com',
+            password='Password123!',
+            first_name='Elena',
+            last_name='Soto',
+        )
+        self.medico = Medico.objects.create(usuario=self.medico_user, registro_medico='RM-006', activo=True)
+        self.especialidad = Especialidad.objects.create(
+            nombre='Psiquiatria',
+            descripcion='Salud mental',
+            activo=True,
+            capacidad_diaria=20,
+        )
+        self.medico.especialidades.add(self.especialidad)
+
+        self.fecha = timezone.localdate() + timedelta(days=3)
+        HorarioMedico.objects.create(
+            medico=self.medico,
+            dia_semana=self.fecha.weekday(),
+            hora_inicio='08:00:00',
+            hora_fin='18:00:00',
+            max_citas_por_hora=1,
+            activo=True,
+        )
+
+        self.cita = Cita.objects.create(
+            paciente=self.paciente,
+            medico=self.medico,
+            especialidad=self.especialidad,
+            eps=self.eps,
+            fecha=self.fecha,
+            hora_inicio='09:00:00',
+            hora_fin='09:30:00',
+            fecha_hora=timezone.make_aware(datetime.strptime(f'{self.fecha} 09:00:00', '%Y-%m-%d %H:%M:%S')),
+            estado='CONFIRMADA',
+            tipo_cita='consulta_general',
+            motivo='Control',
+        )
+        self.client.force_authenticate(user=self.paciente_user)
+        self.url = reverse('cancelar_cita', args=[self.cita.id])
+
+    def test_cancelar_cita_libera_cupo_y_reaparece_en_disponibilidad(self):
+        response = self.client.patch(self.url, {'motivo_cancelacion': 'No puedo asistir'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, 'CANCELADA')
+
+        disponibilidad_response = self.client.get(
+            reverse('disponibilidad_medica'),
+            {
+                'medico_id': self.medico.id,
+                'fecha_inicio': datetime.combine(self.fecha, datetime.strptime('09:00:00', '%H:%M:%S').time()).isoformat(),
+                'fecha_fin': datetime.combine(self.fecha, datetime.strptime('09:00:00', '%H:%M:%S').time()).isoformat(),
+                'duracion_minutos': 30,
+            },
+        )
+
+        self.assertEqual(disponibilidad_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(disponibilidad_response.data['slots_disponibles'])
+        slot = disponibilidad_response.data['slots_disponibles'][0]
+        self.assertTrue(slot['disponible'])
+        self.assertEqual(slot['cupos_restantes'], 1)
+
+        reagendamiento_response = self.client.post(
+            reverse('cita-list'),
+            {
+                'paciente': self.paciente.id,
+                'medico': self.medico.id,
+                'especialidad': self.especialidad.id,
+                'fecha': self.fecha.isoformat(),
+                'hora_inicio': '09:00:00',
+                'hora_fin': '09:30:00',
+                'eps': self.eps.id,
+                'motivo_consulta': 'Reagendamiento tras cancelación',
+                'tipo_cita': 'consulta_general',
+            },
+            format='json',
+        )
+
+        self.assertEqual(reagendamiento_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(reagendamiento_response.data['status'], 'success')
 
 
 class ReprogramarCitaTests(APITestCase):

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Cita, Paciente, EPS, Especialidad, Medico
+from .models import Cita, Paciente, EPS, Especialidad, Medico, Administrativo
 from .services import CitaService
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.models import User
@@ -10,11 +10,14 @@ from .models import (
     EPS,
     Especialidad,
     Medico,
+    Administrativo,
     HorarioMedico,
     AlertaTopeEnviada,
     Sede,
     Feriado,
     ConfiguracionGlobal,
+    TopeEPS,
+    ExcepcionMedico,
 )
 
 
@@ -78,6 +81,159 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
         return paciente
 
 
+def _documento_en_uso(num_documento):
+    """True si `num_documento` ya está tomado por cualquier rol (Paciente,
+    Medico o Administrativo). Usado por los tres *RegistroSerializer para
+    que un mismo número de documento no pueda registrarse dos veces con
+    roles distintos."""
+    return (
+        Paciente.objects.filter(num_documento=num_documento).exists()
+        or Medico.objects.filter(num_documento=num_documento).exists()
+        or Administrativo.objects.filter(num_documento=num_documento).exists()
+    )
+
+
+class MedicoRegistroSerializer(serializers.ModelSerializer):
+    """
+    NOTA (conexion FE-BE, punto 1): registro (autorregistro) de médico.
+
+    A diferencia de Paciente, esta cuenta NO queda activa de inmediato:
+    nace con estado='pendiente' y User.is_active=False hasta que un
+    superadministrador la apruebe (ver views.AprobarSolicitudView), por eso
+    este serializer no emite tokens JWT — la vista (views.registro_medico)
+    solo confirma que la solicitud quedó registrada.
+
+    `especialidad` se recibe como texto libre (así es como hoy la manda
+    Register.jsx, tomada de una lista fija en el frontend) y se resuelve
+    contra Especialidad por nombre sin distinguir mayúsculas/minúsculas; si
+    no existe todavía, se crea (igual que agregarEspecialidadMock en el
+    frontend permitía agregar especialidades sobre la marcha).
+    """
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True, min_length=8)
+    nombres = serializers.CharField(write_only=True, required=True, max_length=150)
+    apellidos = serializers.CharField(write_only=True, required=True, max_length=150)
+    telefono = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    especialidad = serializers.CharField(write_only=True, required=True, max_length=100)
+
+    class Meta:
+        model = Medico
+        fields = [
+            'email', 'password', 'password_confirm', 'nombres', 'apellidos',
+            'num_documento', 'telefono', 'especialidad', 'registro_medico',
+        ]
+
+    def validate(self, data):
+        if data['password'] != data['password_confirm']:
+            raise serializers.ValidationError({'password': 'Las contraseñas no coinciden'})
+
+        if User.objects.filter(email=data['email']).exists():
+            raise serializers.ValidationError({'email': 'Este email ya está registrado'})
+
+        if _documento_en_uso(data['num_documento']):
+            raise serializers.ValidationError({'num_documento': 'Este documento ya está registrado'})
+
+        if Medico.objects.filter(registro_medico=data['registro_medico']).exists():
+            raise serializers.ValidationError(
+                {'registro_medico': 'Este número de registro médico ya está registrado'}
+            )
+
+        return data
+
+    def create(self, validated_data):
+        email = validated_data.pop('email')
+        password = validated_data.pop('password')
+        validated_data.pop('password_confirm')
+        nombres = validated_data.pop('nombres')
+        apellidos = validated_data.pop('apellidos')
+        especialidad_nombre = validated_data.pop('especialidad').strip()
+
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=password,
+            first_name=nombres,
+            last_name=apellidos,
+            is_active=False,
+        )
+
+        especialidad, _created = Especialidad.objects.get_or_create(
+            nombre__iexact=especialidad_nombre,
+            defaults={'nombre': especialidad_nombre, 'descripcion': ''},
+        )
+
+        medico = Medico.objects.create(
+            usuario=user,
+            estado='pendiente',
+            activo=False,
+            **validated_data,
+        )
+        medico.especialidades.add(especialidad)
+
+        return medico
+
+
+class AdministrativoRegistroSerializer(serializers.ModelSerializer):
+    """
+    NOTA (conexion FE-BE, punto 1): registro (autorregistro) de personal
+    administrativo. Igual que MedicoRegistroSerializer: la cuenta nace
+    'pendiente' / User.is_active=False y no se emiten tokens hasta que un
+    superadministrador la aprueba.
+    """
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True, min_length=8)
+    nombres = serializers.CharField(write_only=True, required=True, max_length=150)
+    apellidos = serializers.CharField(write_only=True, required=True, max_length=150)
+    telefono = serializers.CharField(required=False, allow_blank=True, max_length=30)
+
+    class Meta:
+        model = Administrativo
+        fields = [
+            'email', 'password', 'password_confirm', 'nombres', 'apellidos',
+            'num_documento', 'telefono', 'cargo',
+        ]
+        extra_kwargs = {
+            'cargo': {'required': False, 'allow_blank': True},
+        }
+
+    def validate(self, data):
+        if data['password'] != data['password_confirm']:
+            raise serializers.ValidationError({'password': 'Las contraseñas no coinciden'})
+
+        if User.objects.filter(email=data['email']).exists():
+            raise serializers.ValidationError({'email': 'Este email ya está registrado'})
+
+        if _documento_en_uso(data['num_documento']):
+            raise serializers.ValidationError({'num_documento': 'Este documento ya está registrado'})
+
+        return data
+
+    def create(self, validated_data):
+        email = validated_data.pop('email')
+        password = validated_data.pop('password')
+        validated_data.pop('password_confirm')
+        nombres = validated_data.pop('nombres')
+        apellidos = validated_data.pop('apellidos')
+
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=password,
+            first_name=nombres,
+            last_name=apellidos,
+            is_active=False,
+        )
+
+        return Administrativo.objects.create(
+            usuario=user,
+            estado='pendiente',
+            activo=False,
+            **validated_data,
+        )
+
+
 class EPSSerializer(serializers.ModelSerializer):
     """Serializer de solo lectura para el selector de EPS del registro."""
 
@@ -91,12 +247,14 @@ def _rol_de_usuario(user):
     """Determina el rol de un django User para el objeto `user` que
     consume el frontend (paciente/medico/administrativo/superadministrador).
 
-    NOTA (conexion FE-BE, gap pendiente): hoy solo se resuelve realmente
-    "paciente" (via el modelo Paciente) y "administrativo"/"superadministrador"
-    (via grupos o is_staff/is_superuser). El modelo Medico no tiene un
-    concepto de rol/login propio todavia, así que un usuario Medico sin
-    grupo asignado caerá aquí como "medico" solo si existe el registro,
-    pero el LOGIN de médicos no está conectado end-to-end (ver resumen).
+    NOTA (conexion FE-BE, punto 1): "administrativo" se resuelve por grupo
+    Django / is_staff (asignado en views.AprobarSolicitudView al aprobar la
+    solicitud), no por la sola existencia del registro Administrativo — así,
+    una cuenta todavía "pendiente" (que además tiene is_active=False y por
+    lo tanto ni siquiera puede loguearse) nunca se confunde con una
+    aprobada. "medico" sigue resolviéndose por la existencia del registro
+    Medico; igual que antes, una cuenta pendiente no puede llegar hasta acá
+    porque el login la bloquea (User.is_active=False).
     """
     if user.is_superuser or user.groups.filter(name='superadministrador').exists():
         return 'superadministrador'
@@ -133,11 +291,41 @@ def _user_payload(user):
     medico = Medico.objects.filter(usuario=user).first()
     if medico:
         payload.update({
+            'cedula': medico.num_documento,
+            'telefono': medico.telefono,
             'registro_medico': medico.registro_medico,
             'especialidades': list(medico.especialidades.values_list('nombre', flat=True)),
+            'estado': medico.estado,
+        })
+
+    administrativo = Administrativo.objects.filter(usuario=user).first()
+    if administrativo:
+        payload.update({
+            'cedula': administrativo.num_documento,
+            'telefono': administrativo.telefono,
+            'cargo': administrativo.cargo,
+            'estado': administrativo.estado,
         })
 
     return payload
+
+
+def _resolver_username_por_documento(documento):
+    """Busca `documento` como num_documento de Paciente/Medico/Administrativo
+    y devuelve el username (=email) del django User dueño de ese registro.
+
+    NOTA (conexion FE-BE, punto 1): antes solo miraba Paciente, así que
+    médicos y administrativos nunca podían loguearse con su cédula (que es
+    lo único que el formulario de login envía, sin importar el rol — ver
+    Login.jsx). None si no hay ningún registro con ese documento, en cuyo
+    caso PacienteTokenSerializer deja pasar el valor tal cual (caso de
+    superusuarios creados por `createsuperuser`).
+    """
+    for Modelo in (Paciente, Medico, Administrativo):
+        registro = Modelo.objects.filter(num_documento=documento).select_related('usuario').first()
+        if registro:
+            return registro.usuario.username
+    return None
 
 
 class PacienteTokenSerializer(TokenObtainPairSerializer):
@@ -145,19 +333,27 @@ class PacienteTokenSerializer(TokenObtainPairSerializer):
 
     El frontend (Login.jsx) siempre envía el número de documento (cédula)
     en el campo que aquí se recibe como `username` (nombre heredado de
-    SimpleJWT). Como el django User real se crea con username=email
-    (ver PacienteRegistroSerializer.create), aquí se intenta resolver
-    primero el documento contra Paciente.num_documento y, si no existe,
-    se deja pasar tal cual (para permitir login de superusuarios/staff
-    creados por `createsuperuser` con su username real).
+    SimpleJWT), sin importar el rol. Como el django User real se crea con
+    username=email (ver PacienteRegistroSerializer/MedicoRegistroSerializer/
+    AdministrativoRegistroSerializer .create()), aquí se intenta resolver
+    primero el documento contra Paciente/Medico/Administrativo.num_documento
+    (ver _resolver_username_por_documento) y, si no existe, se deja pasar
+    tal cual (para permitir login de superusuarios/staff creados por
+    `createsuperuser` con su username real).
+
+    Una cuenta médico/administrativo "pendiente de autorización" tiene
+    User.is_active=False, así que aunque el documento resuelva bien, el
+    login de todas formas falla acá (SimpleJWT usa authenticate(), que
+    rechaza usuarios inactivos) con el mismo mensaje genérico de
+    "credenciales inválidas" que usa el resto del login.
     """
 
     def validate(self, attrs):
         documento = attrs.get(self.username_field)
         if documento:
-            paciente = Paciente.objects.filter(num_documento=documento).select_related('usuario').first()
-            if paciente:
-                attrs[self.username_field] = paciente.usuario.username
+            username_real = _resolver_username_por_documento(documento)
+            if username_real:
+                attrs[self.username_field] = username_real
 
         data = super().validate(attrs)
         return {
@@ -375,8 +571,161 @@ class HorarioMedicoSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class PacienteAdministrativoSerializer(serializers.ModelSerializer):
+    """CRUD administrativo de pacientes, incluyendo los datos de User."""
+
+    email = serializers.EmailField(source='usuario.email')
+    nombres = serializers.CharField(source='usuario.first_name')
+    apellidos = serializers.CharField(source='usuario.last_name')
+    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    activo = serializers.BooleanField(source='usuario.is_active', read_only=True)
+
+    class Meta:
+        model = Paciente
+        fields = [
+            'id', 'email', 'nombres', 'apellidos', 'password', 'tipo_documento',
+            'num_documento', 'fecha_nacimiento', 'eps', 'direccion', 'telefono', 'activo',
+        ]
+        read_only_fields = ['id', 'activo']
+
+    def validate_email(self, value):
+        usuarios = User.objects.filter(email__iexact=value)
+        if self.instance:
+            usuarios = usuarios.exclude(pk=self.instance.usuario_id)
+        if usuarios.exists():
+            raise serializers.ValidationError('Este email ya está registrado.')
+        return value
+
+    def create(self, validated_data):
+        user_data = validated_data.pop('usuario')
+        password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'La contraseña es obligatoria al crear un paciente.'})
+        user = User.objects.create_user(
+            username=user_data['email'], email=user_data['email'], password=password,
+            first_name=user_data.get('first_name', ''), last_name=user_data.get('last_name', ''),
+        )
+        return Paciente.objects.create(usuario=user, **validated_data)
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('usuario', {})
+        password = validated_data.pop('password', None)
+        for field, value in user_data.items():
+            setattr(instance.usuario, field, value)
+        if 'email' in user_data:
+            instance.usuario.username = user_data['email']
+        if password:
+            instance.usuario.set_password(password)
+        instance.usuario.save()
+        return super().update(instance, validated_data)
+
+
+class MedicoAdministrativoSerializer(serializers.ModelSerializer):
+    """CRUD administrativo de médicos y sus especialidades."""
+
+    email = serializers.EmailField(source='usuario.email')
+    nombres = serializers.CharField(source='usuario.first_name')
+    apellidos = serializers.CharField(source='usuario.last_name')
+    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    especialidad_ids = serializers.PrimaryKeyRelatedField(
+        source='especialidades', many=True, queryset=Especialidad.objects.all(), required=False,
+    )
+    especialidades = EspecialidadSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Medico
+        fields = [
+            'id', 'email', 'nombres', 'apellidos', 'password', 'registro_medico', 'num_documento',
+            'telefono', 'activo', 'estado', 'motivo_rechazo', 'especialidad_ids', 'especialidades',
+        ]
+        read_only_fields = ['id', 'especialidades']
+
+    def validate_email(self, value):
+        usuarios = User.objects.filter(email__iexact=value)
+        if self.instance:
+            usuarios = usuarios.exclude(pk=self.instance.usuario_id)
+        if usuarios.exists():
+            raise serializers.ValidationError('Este email ya está registrado.')
+        return value
+
+    def create(self, validated_data):
+        user_data = validated_data.pop('usuario')
+        especialidades = validated_data.pop('especialidades', [])
+        password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'La contraseña es obligatoria al crear un médico.'})
+        user = User.objects.create_user(
+            username=user_data['email'], email=user_data['email'], password=password,
+            first_name=user_data.get('first_name', ''), last_name=user_data.get('last_name', ''),
+        )
+        medico = Medico.objects.create(usuario=user, **validated_data)
+        medico.especialidades.set(especialidades)
+        return medico
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('usuario', {})
+        especialidades = validated_data.pop('especialidades', None)
+        password = validated_data.pop('password', None)
+        for field, value in user_data.items():
+            setattr(instance.usuario, field, value)
+        if 'email' in user_data:
+            instance.usuario.username = user_data['email']
+        if password:
+            instance.usuario.set_password(password)
+        instance.usuario.save()
+        medico = super().update(instance, validated_data)
+        if especialidades is not None:
+            medico.especialidades.set(especialidades)
+        return medico
+
+
+class TopeEPSSerializer(serializers.ModelSerializer):
+    eps_nombre = serializers.CharField(source='eps.nombre', read_only=True)
+
+    class Meta:
+        model = TopeEPS
+        fields = ['id', 'eps', 'eps_nombre', 'limite_citas', 'tipo_periodo', 'presupuesto_maximo']
+        read_only_fields = ['id', 'eps_nombre']
+
+    def validate_limite_citas(self, value):
+        if value < 1:
+            raise serializers.ValidationError('El límite de citas debe ser al menos 1.')
+        return value
+
+
+class RestriccionFrecuenciaSerializer(serializers.ModelSerializer):
+    especialidad = serializers.CharField(source='nombre', read_only=True)
+
+    class Meta:
+        model = Especialidad
+        fields = ['id', 'especialidad', 'dias_entre_citas']
+        read_only_fields = ['id', 'especialidad']
+
+
+class ExcepcionMedicoSerializer(serializers.ModelSerializer):
+    medico_nombre = serializers.CharField(source='medico.usuario.get_full_name', read_only=True)
+
+    class Meta:
+        model = ExcepcionMedico
+        fields = ['id', 'medico', 'medico_nombre', 'fecha', 'hora_inicio', 'hora_fin', 'motivo', 'activo']
+        read_only_fields = ['id', 'medico_nombre']
+        extra_kwargs = {'medico': {'required': False}}
+
+    def validate(self, attrs):
+        inicio = attrs.get('hora_inicio', getattr(self.instance, 'hora_inicio', None))
+        fin = attrs.get('hora_fin', getattr(self.instance, 'hora_fin', None))
+        if bool(inicio) != bool(fin):
+            raise serializers.ValidationError('Para una excepción parcial debe indicar hora de inicio y fin.')
+        if inicio and inicio >= fin:
+            raise serializers.ValidationError({'hora_inicio': 'La hora de inicio debe ser menor que la hora de fin.'})
+        return attrs
+
+
 class CitaSerializer(serializers.ModelSerializer):
     motivo_consulta = serializers.CharField(source='motivo', required=True)
+    paciente_nombre = serializers.CharField(source='paciente.usuario.get_full_name', read_only=True)
+    medico_nombre = serializers.CharField(source='medico.usuario.get_full_name', read_only=True)
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
 
     class Meta:
         model = Cita
@@ -394,6 +743,9 @@ class CitaSerializer(serializers.ModelSerializer):
             'estado',
             'notificacion_encolada',
             'creado_en',
+            'paciente_nombre',
+            'medico_nombre',
+            'especialidad_nombre',
         ]
         read_only_fields = ['id', 'estado', 'notificacion_encolada', 'creado_en']
         extra_kwargs = {
@@ -422,6 +774,7 @@ class CitaSerializer(serializers.ModelSerializer):
 class AgendaMedicoSerializer(serializers.ModelSerializer):
     medico_nombre = serializers.CharField(source="medico.usuario.get_full_name", read_only=True)
     especialidad_nombre = serializers.CharField(source="especialidad.nombre", read_only=True)
+    paciente_nombre = serializers.CharField(source="paciente.usuario.get_full_name", read_only=True)
 
     class Meta:
         model = Cita
@@ -434,6 +787,7 @@ class AgendaMedicoSerializer(serializers.ModelSerializer):
             "motivo",
             "medico_nombre",
             "especialidad_nombre",
+            "paciente_nombre",
         ]
 
 
