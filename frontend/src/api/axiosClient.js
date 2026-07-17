@@ -63,16 +63,35 @@ export function extraerMensajeError(err, fallback) {
   if (!data) return fallback;
   if (typeof data === "string") return data;
   if (data.detail) return data.detail;
+
+  // Las citas responden con una envoltura consistente:
+  // { message: "No es posible...", errors: { campo: ["Motivo concreto"] } }.
+  // Se debe priorizar el motivo concreto para que el paciente pueda corregir
+  // el formulario, en vez de quedarse con el título genérico de la respuesta.
+  const obtenerPrimerMensaje = (valor) => {
+    if (typeof valor === "string" && valor.trim()) return valor;
+    if (Array.isArray(valor)) {
+      for (const item of valor) {
+        const mensaje = obtenerPrimerMensaje(item);
+        if (mensaje) return mensaje;
+      }
+      return null;
+    }
+    if (valor && typeof valor === "object") {
+      for (const item of Object.values(valor)) {
+        const mensaje = obtenerPrimerMensaje(item);
+        if (mensaje) return mensaje;
+      }
+    }
+    return null;
+  };
+
+  const mensajeError = obtenerPrimerMensaje(data.errors ?? data.non_field_errors);
+  if (mensajeError) return mensajeError;
   if (data.message) return data.message;
-  if (Array.isArray(data.non_field_errors) && data.non_field_errors[0]) {
-    return data.non_field_errors[0];
-  }
-  // Cualquier otro campo (num_documento, email, password, etc.): toma el
-  // primer valor, ya sea string o lista de strings.
-  const primerCampo = Object.values(data).find((v) => v != null);
-  if (Array.isArray(primerCampo)) return primerCampo[0] ?? fallback;
-  if (typeof primerCampo === "string") return primerCampo;
-  return fallback;
+
+  // Cualquier otro campo (num_documento, email, password, etc.).
+  return obtenerPrimerMensaje(data) ?? fallback;
 }
 
 export default axiosClient;
