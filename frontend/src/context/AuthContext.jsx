@@ -325,6 +325,30 @@ export function AuthProvider({ children }) {
   // solo updateProfile dejaría al usuario editado con datos inconsistentes
   // entre back y front hasta que se conecte todo el dashboard.
   async function updateProfile(cambios) {
+    if (!USE_MOCK && user?.rol === "paciente") {
+      const { data } = await axiosClient.put("/perfil/", {
+        primer_nombre: cambios.nombre,
+        apellido: cambios.apellido,
+        email: cambios.correo,
+        telefono: cambios.telefono ?? "",
+        direccion: cambios.direccion ?? "",
+      });
+      const perfil = data.paciente;
+      const actualizado = {
+        ...user,
+        nombre: perfil.primer_nombre,
+        apellido: perfil.apellido,
+        correo: perfil.email,
+        telefono: perfil.telefono ?? "",
+        direccion: perfil.direccion ?? "",
+        cedula: perfil.num_documento ?? user.cedula,
+      };
+      const sesion = leerSesion();
+      if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn);
+      setUser(actualizado);
+      return actualizado;
+    }
+
     const actualizado = actualizarUsuarioMock(user.id, cambios);
 
     const sesion = leerSesion();
