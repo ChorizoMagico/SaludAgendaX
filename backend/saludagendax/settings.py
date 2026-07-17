@@ -41,6 +41,8 @@ ALLOWED_HOSTS = [
 
 CSRF_TRUSTED_ORIGINS = [
     "https://saludagendax-production.up.railway.app",
+    "lively-adventure-production-50f7.up.railway.app",
+
 ]
 
 # NOTA (conexion FE-BE): se agregan los orígenes por defecto de Vite en
@@ -48,6 +50,7 @@ CSRF_TRUSTED_ORIGINS = [
 # backend local sin que CORS bloquee la petición.
 CORS_ALLOWED_ORIGINS = [
     "https://saludagendax-production.up.railway.app",
+    "lively-adventure-production-50f7.up.railway.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
