@@ -32,16 +32,24 @@ from .serializers import (
     FeriadoSerializer,
     ConfiguracionGlobalSerializer,
     EPSSerializer,
+    PacienteAdministrativoSerializer,
+    MedicoAdministrativoSerializer,
+    TopeEPSSerializer,
+    RestriccionFrecuenciaSerializer,
+    ExcepcionMedicoSerializer,
 )
 
 from .utils import generar_token_recuperacion, verificar_token, enviar_email_recuperacion
 from .serializers import PacienteTokenSerializer, EspecialidadSerializer, CitaSerializer
 from .models import (
     Cita, Especialidad, Paciente, Medico, Administrativo, HorarioMedico,
-    AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal, EPS,
+    AlertaTopeEnviada, Sede, Feriado, ConfiguracionGlobal, EPS, TopeEPS, ExcepcionMedico,
 )
 from .services import CitaService
-from .permissions import IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsSuperAdministrativeUser
+from .permissions import (
+    IsAdministrativeOrAuthenticatedPatient, IsAdministrativeUser, IsAdministrativeOnlyUser,
+    IsSuperAdministrativeUser,
+)
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.viewsets import ModelViewSet
@@ -714,6 +722,115 @@ class HorarioMedicoViewSet(ModelViewSet):
         "head",
         "options",
     ]
+
+
+class PacienteAdministrativoViewSet(ModelViewSet):
+    """CRUD administrativo; DELETE desactiva la cuenta para conservar el historial."""
+
+    serializer_class = PacienteAdministrativoSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeOnlyUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Paciente.objects.select_related('usuario', 'eps').order_by('usuario__last_name', 'usuario__first_name')
+        busqueda = self.request.query_params.get('search', '').strip()
+        if busqueda:
+            queryset = queryset.filter(
+                Q(num_documento__icontains=busqueda)
+                | Q(usuario__first_name__icontains=busqueda)
+                | Q(usuario__last_name__icontains=busqueda)
+                | Q(usuario__email__icontains=busqueda)
+            )
+        return queryset
+
+    def perform_destroy(self, instance):
+        instance.usuario.is_active = False
+        instance.usuario.save(update_fields=['is_active'])
+
+
+class MedicoAdministrativoViewSet(ModelViewSet):
+    """CRUD administrativo de médicos; DELETE es una desactivación lógica."""
+
+    serializer_class = MedicoAdministrativoSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAdministrativeOnlyUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = Medico.objects.select_related('usuario').prefetch_related('especialidades').order_by(
+            'usuario__last_name', 'usuario__first_name'
+        )
+        busqueda = self.request.query_params.get('search', '').strip()
+        if busqueda:
+            queryset = queryset.filter(
+                Q(registro_medico__icontains=busqueda)
+                | Q(num_documento__icontains=busqueda)
+                | Q(usuario__first_name__icontains=busqueda)
+                | Q(usuario__last_name__icontains=busqueda)
+                | Q(usuario__email__icontains=busqueda)
+            ).distinct()
+        return queryset
+
+    def perform_destroy(self, instance):
+        instance.activo = False
+        instance.save(update_fields=['activo'])
+        instance.usuario.is_active = False
+        instance.usuario.save(update_fields=['is_active'])
+
+
+class TopeEPSViewSet(ModelViewSet):
+    """Configuración de topes y presupuesto por EPS."""
+
+    serializer_class = TopeEPSSerializer
+    queryset = TopeEPS.objects.select_related('eps').order_by('eps__nombre')
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+
+class RestriccionFrecuenciaViewSet(ModelViewSet):
+    """Configuración del intervalo mínimo entre citas por especialidad."""
+
+    serializer_class = RestriccionFrecuenciaSerializer
+    queryset = Especialidad.objects.order_by('nombre')
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsSuperAdministrativeUser]
+    http_method_names = ['get', 'put', 'patch', 'head', 'options']
+    pagination_class = None
+
+
+class ExcepcionMedicoViewSet(ModelViewSet):
+    """Excepciones puntuales de disponibilidad. Administración ve todas; cada médico gestiona las propias."""
+
+    serializer_class = ExcepcionMedicoSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    pagination_class = None
+
+    def _medico_del_usuario(self):
+        return Medico.objects.filter(usuario=self.request.user).first()
+
+    def get_queryset(self):
+        queryset = ExcepcionMedico.objects.select_related('medico__usuario').order_by('fecha', 'hora_inicio', 'id')
+        if IsAdministrativeUser.is_admin_user(self.request.user):
+            medico_id = self.request.query_params.get('medico')
+            return queryset.filter(medico_id=medico_id) if medico_id else queryset
+        medico = self._medico_del_usuario()
+        return queryset.filter(medico=medico) if medico else queryset.none()
+
+    def perform_create(self, serializer):
+        if IsAdministrativeUser.is_admin_user(self.request.user):
+            serializer.save()
+            return
+        medico = self._medico_del_usuario()
+        if not medico:
+            raise serializers.ValidationError({'detail': 'Solo un médico puede registrar sus excepciones.'})
+        serializer.save(medico=medico)
 
 
 class CitaPagination(PageNumberPagination):

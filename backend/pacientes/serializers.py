@@ -16,6 +16,8 @@ from .models import (
     Sede,
     Feriado,
     ConfiguracionGlobal,
+    TopeEPS,
+    ExcepcionMedico,
 )
 
 
@@ -566,6 +568,156 @@ class HorarioMedicoSerializer(serializers.ModelSerializer):
                 "horario": "Ya existe un horario que se solapa con este intervalo."
             })
 
+        return attrs
+
+
+class PacienteAdministrativoSerializer(serializers.ModelSerializer):
+    """CRUD administrativo de pacientes, incluyendo los datos de User."""
+
+    email = serializers.EmailField(source='usuario.email')
+    nombres = serializers.CharField(source='usuario.first_name')
+    apellidos = serializers.CharField(source='usuario.last_name')
+    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    activo = serializers.BooleanField(source='usuario.is_active', read_only=True)
+
+    class Meta:
+        model = Paciente
+        fields = [
+            'id', 'email', 'nombres', 'apellidos', 'password', 'tipo_documento',
+            'num_documento', 'fecha_nacimiento', 'eps', 'direccion', 'telefono', 'activo',
+        ]
+        read_only_fields = ['id', 'activo']
+
+    def validate_email(self, value):
+        usuarios = User.objects.filter(email__iexact=value)
+        if self.instance:
+            usuarios = usuarios.exclude(pk=self.instance.usuario_id)
+        if usuarios.exists():
+            raise serializers.ValidationError('Este email ya está registrado.')
+        return value
+
+    def create(self, validated_data):
+        user_data = validated_data.pop('usuario')
+        password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'La contraseña es obligatoria al crear un paciente.'})
+        user = User.objects.create_user(
+            username=user_data['email'], email=user_data['email'], password=password,
+            first_name=user_data.get('first_name', ''), last_name=user_data.get('last_name', ''),
+        )
+        return Paciente.objects.create(usuario=user, **validated_data)
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('usuario', {})
+        password = validated_data.pop('password', None)
+        for field, value in user_data.items():
+            setattr(instance.usuario, field, value)
+        if 'email' in user_data:
+            instance.usuario.username = user_data['email']
+        if password:
+            instance.usuario.set_password(password)
+        instance.usuario.save()
+        return super().update(instance, validated_data)
+
+
+class MedicoAdministrativoSerializer(serializers.ModelSerializer):
+    """CRUD administrativo de médicos y sus especialidades."""
+
+    email = serializers.EmailField(source='usuario.email')
+    nombres = serializers.CharField(source='usuario.first_name')
+    apellidos = serializers.CharField(source='usuario.last_name')
+    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    especialidad_ids = serializers.PrimaryKeyRelatedField(
+        source='especialidades', many=True, queryset=Especialidad.objects.all(), required=False,
+    )
+    especialidades = EspecialidadSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Medico
+        fields = [
+            'id', 'email', 'nombres', 'apellidos', 'password', 'registro_medico', 'num_documento',
+            'telefono', 'activo', 'estado', 'motivo_rechazo', 'especialidad_ids', 'especialidades',
+        ]
+        read_only_fields = ['id', 'especialidades']
+
+    def validate_email(self, value):
+        usuarios = User.objects.filter(email__iexact=value)
+        if self.instance:
+            usuarios = usuarios.exclude(pk=self.instance.usuario_id)
+        if usuarios.exists():
+            raise serializers.ValidationError('Este email ya está registrado.')
+        return value
+
+    def create(self, validated_data):
+        user_data = validated_data.pop('usuario')
+        especialidades = validated_data.pop('especialidades', [])
+        password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'La contraseña es obligatoria al crear un médico.'})
+        user = User.objects.create_user(
+            username=user_data['email'], email=user_data['email'], password=password,
+            first_name=user_data.get('first_name', ''), last_name=user_data.get('last_name', ''),
+        )
+        medico = Medico.objects.create(usuario=user, **validated_data)
+        medico.especialidades.set(especialidades)
+        return medico
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('usuario', {})
+        especialidades = validated_data.pop('especialidades', None)
+        password = validated_data.pop('password', None)
+        for field, value in user_data.items():
+            setattr(instance.usuario, field, value)
+        if 'email' in user_data:
+            instance.usuario.username = user_data['email']
+        if password:
+            instance.usuario.set_password(password)
+        instance.usuario.save()
+        medico = super().update(instance, validated_data)
+        if especialidades is not None:
+            medico.especialidades.set(especialidades)
+        return medico
+
+
+class TopeEPSSerializer(serializers.ModelSerializer):
+    eps_nombre = serializers.CharField(source='eps.nombre', read_only=True)
+
+    class Meta:
+        model = TopeEPS
+        fields = ['id', 'eps', 'eps_nombre', 'limite_citas', 'tipo_periodo', 'presupuesto_maximo']
+        read_only_fields = ['id', 'eps_nombre']
+
+    def validate_limite_citas(self, value):
+        if value < 1:
+            raise serializers.ValidationError('El límite de citas debe ser al menos 1.')
+        return value
+
+
+class RestriccionFrecuenciaSerializer(serializers.ModelSerializer):
+    especialidad = serializers.CharField(source='nombre', read_only=True)
+
+    class Meta:
+        model = Especialidad
+        fields = ['id', 'especialidad', 'dias_entre_citas']
+        read_only_fields = ['id', 'especialidad']
+
+
+class ExcepcionMedicoSerializer(serializers.ModelSerializer):
+    medico_nombre = serializers.CharField(source='medico.usuario.get_full_name', read_only=True)
+
+    class Meta:
+        model = ExcepcionMedico
+        fields = ['id', 'medico', 'medico_nombre', 'fecha', 'hora_inicio', 'hora_fin', 'motivo', 'activo']
+        read_only_fields = ['id', 'medico_nombre']
+        extra_kwargs = {'medico': {'required': False}}
+
+    def validate(self, attrs):
+        inicio = attrs.get('hora_inicio', getattr(self.instance, 'hora_inicio', None))
+        fin = attrs.get('hora_fin', getattr(self.instance, 'hora_fin', None))
+        if bool(inicio) != bool(fin):
+            raise serializers.ValidationError('Para una excepción parcial debe indicar hora de inicio y fin.')
+        if inicio and inicio >= fin:
+            raise serializers.ValidationError({'hora_inicio': 'La hora de inicio debe ser menor que la hora de fin.'})
         return attrs
 
 
