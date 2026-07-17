@@ -140,6 +140,9 @@ export default function Register() {
       if (rol === "medico" && !form.especialidad) return "Indica tu especialidad médica.";
       if (rol === "medico" && !form.numeroRegistroMedico) return "Ingresa tu número de registro médico.";
     }
+    if (n === 2 && rol === "paciente" && !form.epsId) {
+      return "No hay una EPS disponible. Actualiza la página o contacta a administración.";
+    }
     if (n === 3 && esFinal) {
       if (form.password.length < 8) return "La contraseña debe tener al menos 8 caracteres.";
       if (form.password !== form.confirmPassword) return "Las contraseñas no coinciden.";

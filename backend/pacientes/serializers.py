@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.db import transaction
 from .models import Cita, Paciente, EPS, Especialidad, Medico, Administrativo
 from .services import CitaService
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -25,7 +26,15 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
-    eps_id = serializers.IntegerField(required=False, allow_null=True)
+    # Se valida antes de crear el User. Antes este campo era opcional y el
+    # create() terminaba con EPS.objects.get(id=None) *después* de guardar
+    # auth_user, dejando cuentas huérfanas sin perfil Paciente.
+    eps_id = serializers.PrimaryKeyRelatedField(
+        source='eps',
+        queryset=EPS.objects.filter(activo=True),
+        write_only=True,
+        required=True,
+    )
     # NOTA (conexion FE-BE): el frontend recoge nombres/apellidos en el
     # formulario de registro, pero antes se perdian porque no existian en
     # este serializer. Se agregan aqui como write-only y se mapean a
@@ -55,11 +64,12 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
         
         return data
 
+    @transaction.atomic
     def create(self, validated_data):
         email = validated_data.pop('email')
         password = validated_data.pop('password')
         validated_data.pop('password_confirm')
-        eps_id = validated_data.pop('eps_id')
+        eps = validated_data.pop('eps')
         nombres = validated_data.pop('nombres')
         apellidos = validated_data.pop('apellidos')
 
@@ -71,7 +81,6 @@ class PacienteRegistroSerializer(serializers.ModelSerializer):
             last_name=apellidos,
         )
 
-        eps = EPS.objects.get(id=eps_id)
         paciente = Paciente.objects.create(
             usuario=user,
             eps=eps,
