@@ -101,6 +101,7 @@ export default function PacienteDashboard() {
   const { user: paciente, updateProfile } = useAuth();
   const [tab, setTab] = useState("inicio");
   const [catalogo, setCatalogo] = useState([]);
+  const [sedesReales, setSedesReales] = useState([]);
   const [citasReales, setCitasReales] = useState([]);
   const [slotsReales, setSlotsReales] = useState([]);
   const [cargandoDatos, setCargandoDatos] = useState(!USE_MOCK);
@@ -120,11 +121,13 @@ export default function PacienteDashboard() {
     let activo = true;
     Promise.all([
       axiosClient.get("/especialidades/"),
+      axiosClient.get("/sedes/"),
       axiosClient.get("/citas/", { params: { page_size: 100 } }),
     ])
-      .then(([especialidades, citasApi]) => {
+      .then(([especialidades, sedesApi, citasApi]) => {
         if (!activo) return;
         setCatalogo(comoLista(especialidades.data));
+        setSedesReales(comoLista(sedesApi.data));
         setCitasReales(comoLista(citasApi.data));
       })
       .catch((error) => activo && setErrorDatos(extraerMensajeError(error, "No fue posible cargar tus citas.")))
@@ -152,9 +155,8 @@ export default function PacienteDashboard() {
         id: cita.id,
         medicoId: cita.medico,
         especialidad: cita.especialidad_nombre ?? catalogo.find((especialidad) => especialidad.id === cita.especialidad)?.nombre ?? "Especialidad",
-        // La API actual no modela sedes para médicos ni citas. No se debe
-        // inventar una sede de mock ni usarla para filtrar la disponibilidad.
-        sede: "No especificada",
+        sede: String(cita.sede ?? ""),
+        sedeNombre: cita.sede_nombre ?? "No especificada",
         fecha: cita.fecha,
         hora: cita.hora_inicio?.slice(0, 5),
         estado: estadoCitaApi(cita.estado),
@@ -187,11 +189,19 @@ export default function PacienteDashboard() {
 
   const medicosFiltrados = USE_MOCK
     ? getMedicosDisponibles().filter((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === wizardSede)
-    : medicosReales.filter((m) => m.especialidad === wizardEspecialidad && m.activo);
+    : medicosReales.filter(
+        (m) => m.especialidad === wizardEspecialidad && m.activo && m.sede_id === Number(wizardSede)
+      );
 
   const sedesConMedico = USE_MOCK
     ? SEDES.filter((sede) => getMedicosDisponibles().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede))
-    : ["No especificada"];
+    : sedesReales.filter((sede) => medicosReales.some(
+        (medico) => medico.especialidad === wizardEspecialidad && medico.activo && medico.sede_id === sede.id
+      ));
+
+  const wizardSedeNombre = USE_MOCK
+    ? wizardSede
+    : sedesReales.find((sede) => sede.id === Number(wizardSede))?.nombre ?? "";
 
   const medicoElegido = wizardMedicoId
     ? (USE_MOCK ? getMedicoPorId(wizardMedicoId) : medicosReales.find((m) => m.id === wizardMedicoId))
@@ -365,6 +375,7 @@ export default function PacienteDashboard() {
           await axiosClient.post("/citas/", {
             medico: wizardMedicoId,
             especialidad: especialidad?.id,
+            sede: Number(wizardSede),
             fecha: wizardFecha,
             hora_inicio: `${wizardFranja}:00`,
             hora_fin: `${sumarMinutos(wizardFranja, 30)}:00`,
@@ -565,7 +576,7 @@ export default function PacienteDashboard() {
                         seleccionado={wizardEspecialidad === esp}
                         onClick={() => {
                           setWizardEspecialidad(esp);
-                          setWizardSede(USE_MOCK ? "" : "No especificada");
+                          setWizardSede("");
                           setWizardMedicoId(null);
                         }}
                         icon="medical_information"
@@ -573,7 +584,7 @@ export default function PacienteDashboard() {
                       />
                     ))}
                   </div>
-                  <BotonContinuar disabled={!wizardEspecialidad} onClick={() => setWizardPaso(USE_MOCK ? 2 : 3)} />
+                  <BotonContinuar disabled={!wizardEspecialidad} onClick={() => setWizardPaso(2)} />
                 </div>
               )}
 
@@ -587,18 +598,22 @@ export default function PacienteDashboard() {
                     </p>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {sedesConMedico.map((sede) => (
-                      <OpcionPill
-                        key={sede}
-                        seleccionado={wizardSede === sede}
-                        onClick={() => {
-                          setWizardSede(sede);
-                          setWizardMedicoId(null);
-                        }}
-                        icon="location_on"
-                        label={sede}
-                      />
-                    ))}
+                    {sedesConMedico.map((sede) => {
+                      const sedeId = USE_MOCK ? sede : String(sede.id);
+                      const sedeNombre = USE_MOCK ? sede : sede.nombre;
+                      return (
+                        <OpcionPill
+                          key={sedeId}
+                          seleccionado={wizardSede === sedeId}
+                          onClick={() => {
+                            setWizardSede(sedeId);
+                            setWizardMedicoId(null);
+                          }}
+                          icon="location_on"
+                          label={sedeNombre}
+                        />
+                      );
+                    })}
                   </div>
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardSede} onClick={() => setWizardPaso(3)} />
@@ -613,7 +628,7 @@ export default function PacienteDashboard() {
               {wizardPaso === 3 && (
                 <div className="flex flex-col gap-4 mt-6">
                   <label className="text-sm font-semibold text-[#0F3D3E]">
-                    Médicos de {wizardEspecialidad} en {wizardSede}
+                    Médicos de {wizardEspecialidad} en {wizardSedeNombre}
                   </label>
                   {medicosFiltrados.length === 0 && (
                     <p className="text-sm text-[#48605C] bg-[#F3F8F7] rounded-lg px-4 py-3">
@@ -633,8 +648,8 @@ export default function PacienteDashboard() {
                   </div>
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardMedicoId} onClick={() => setWizardPaso(4)} />
-                    <button onClick={() => { setWizardMensaje(""); setWizardPaso(USE_MOCK ? 2 : 1); }} className="text-sm text-[#48605C] hover:underline">
-                      ← {USE_MOCK ? "Cambiar sede" : "Cambiar especialidad"}
+                    <button onClick={() => { setWizardMensaje(""); setWizardPaso(2); }} className="text-sm text-[#48605C] hover:underline">
+                      ← Cambiar sede
                     </button>
                   </div>
                 </div>
@@ -713,7 +728,7 @@ export default function PacienteDashboard() {
                         etiqueta="Médico"
                         valor={medicoElegido ? `${medicoElegido.nombre} ${medicoElegido.apellido}` : ""}
                       />
-                      <FilaConfirmacion icon="location_on" etiqueta="Sede" valor={wizardSede} />
+                      <FilaConfirmacion icon="location_on" etiqueta="Sede" valor={wizardSedeNombre} />
                       <FilaConfirmacion icon="event" etiqueta="Fecha" valor={wizardFecha} mono />
                       <FilaConfirmacion icon="schedule" etiqueta="Hora" valor={wizardFranja} mono />
                       <FilaConfirmacion icon="hourglass_top" etiqueta="Duración" valor="30 minutos" mono />
@@ -847,7 +862,7 @@ function TicketCita({ cita, medico, destacada, onVer, onReprogramar, onCancelar,
           </span>
           <span className="sax-mono text-sm text-[#48605C] flex items-center gap-1.5">
             <span className="material-symbols-outlined text-base">location_on</span>
-            {cita.sede}
+            {cita.sedeNombre ?? cita.sede}
           </span>
         </div>
 

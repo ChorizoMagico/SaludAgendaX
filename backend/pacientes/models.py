@@ -98,6 +98,9 @@ class Medico(models.Model):
     # existentes creadas antes de esta migración.
     num_documento = models.CharField(max_length=30, unique=True, null=True, blank=True)
     telefono = models.CharField(max_length=30, blank=True)
+    sede = models.ForeignKey(
+        'Sede', on_delete=models.SET_NULL, null=True, blank=True, related_name='medicos'
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_SOLICITUD_CHOICES, default='pendiente')
     motivo_rechazo = models.CharField(max_length=255, blank=True)
 
@@ -143,6 +146,7 @@ class Cita(models.Model):
     hora_inicio = models.TimeField(null=True, blank=True)
     hora_fin = models.TimeField(null=True, blank=True)
     eps = models.ForeignKey(EPS, on_delete=models.PROTECT, null=True, blank=True)
+    sede = models.ForeignKey('Sede', on_delete=models.PROTECT, null=True, blank=True)
     estado = models.CharField(max_length=20, choices=ESTADOS, default='PENDIENTE')
     motivo = models.TextField(blank=True, null=True)
     tipo_cita = models.CharField(max_length=30, default='consulta_general')

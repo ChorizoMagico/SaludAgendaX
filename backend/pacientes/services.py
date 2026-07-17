@@ -60,6 +60,7 @@ class CitaService:
         medico = attrs.get('medico')
         especialidad = attrs.get('especialidad')
         eps = attrs.get('eps')
+        sede = attrs.get('sede')
         fecha = attrs.get('fecha')
         hora_inicio = attrs.get('hora_inicio')
         hora_fin = attrs.get('hora_fin')
@@ -141,6 +142,9 @@ class CitaService:
 
         if medico and especialidad and not medico.especialidades.filter(pk=especialidad.pk).exists():
             add_error('especialidad', 'El médico no tiene asignada la especialidad seleccionada.')
+
+        if sede and medico and medico.sede_id != sede.id:
+            add_error('sede', 'El médico no atiende en la sede seleccionada.')
 
         if fecha and hora_inicio and hora_fin and medico:
             horarios = HorarioMedico.objects.filter(
@@ -350,6 +354,7 @@ class CitaService:
                 medico=attrs['medico'],
                 especialidad=attrs['especialidad'],
                 eps=attrs['eps'],
+                sede=attrs.get('sede'),
                 fecha=attrs['fecha'],
                 hora_inicio=attrs['hora_inicio'],
                 hora_fin=attrs['hora_fin'],
