@@ -19,8 +19,95 @@ from .models import (
     Paciente,
     Sede,
     TopeEPS,
+    ExcepcionMedico,
 )
 from .notificaciones import enviar_notificaciones_pendientes
+
+
+class EndpointsAdministracionPendientesTests(APITestCase):
+    """Cobertura de los endpoints que conectan los módulos administrativos con el backend."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='admin-crud@example.com', email='admin-crud@example.com', password='Password123!', is_staff=True,
+        )
+        self.superadmin = User.objects.create_superuser(
+            username='super-crud@example.com', email='super-crud@example.com', password='Password123!',
+        )
+        self.eps = EPS.objects.create(nombre='EPS CRUD', codigo='CRUD-01', activo=True)
+        self.especialidad = Especialidad.objects.create(
+            nombre='Medicina interna CRUD', descripcion='Pruebas', dias_entre_citas=7,
+        )
+        medico_user = User.objects.create_user(
+            username='medico-crud@example.com', email='medico-crud@example.com', password='Password123!',
+            first_name='Marta', last_name='Medica',
+        )
+        self.medico = Medico.objects.create(
+            usuario=medico_user, registro_medico='RM-CRUD', num_documento='90001', activo=True, estado='aprobado',
+        )
+        self.medico.especialidades.add(self.especialidad)
+
+    def test_administrativo_gestiona_paciente_y_desactivacion_conserva_registro(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.post(reverse('paciente-administrativo-list'), {
+            'email': 'paciente-crud@example.com', 'password': 'Password123!', 'nombres': 'Paula',
+            'apellidos': 'Paciente', 'tipo_documento': 'CC', 'num_documento': '80001',
+            'fecha_nacimiento': '1990-01-01', 'eps': self.eps.id, 'direccion': 'Calle 1', 'telefono': '3000000000',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        paciente_id = response.data['id']
+
+        response = self.client.patch(
+            reverse('paciente-administrativo-detail', args=[paciente_id]), {'telefono': '3111111111'}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['telefono'], '3111111111')
+
+        response = self.client.delete(reverse('paciente-administrativo-detail', args=[paciente_id]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Paciente.objects.get(pk=paciente_id).usuario.is_active)
+
+    def test_administrativo_gestiona_medico_y_no_autorizado_es_rechazado(self):
+        normal = User.objects.create_user('normal-crud@example.com', 'normal-crud@example.com', 'Password123!')
+        self.client.force_authenticate(user=normal)
+        response = self.client.get(reverse('medico-administrativo-list'))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            reverse('medico-administrativo-detail', args=[self.medico.id]),
+            {'activo': False, 'especialidad_ids': [self.especialidad.id]}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['activo'])
+
+    def test_superadmin_configura_tope_y_restriccion_de_frecuencia(self):
+        self.client.force_authenticate(user=self.superadmin)
+        response = self.client.post(reverse('tope-eps-list'), {
+            'eps': self.eps.id, 'limite_citas': 20, 'tipo_periodo': 'MENSUAL', 'presupuesto_maximo': '15.00',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['eps_nombre'], self.eps.nombre)
+
+        response = self.client.patch(
+            reverse('restriccion-frecuencia-detail', args=[self.especialidad.id]), {'dias_entre_citas': 14}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['dias_entre_citas'], 14)
+
+    def test_medico_solo_gestiona_sus_excepciones_y_se_validan_las_horas(self):
+        self.client.force_authenticate(user=self.medico.usuario)
+        response = self.client.post(reverse('excepcion-medico-list'), {
+            'medico': self.medico.id, 'fecha': '2030-01-01', 'hora_inicio': '13:00:00', 'hora_fin': '12:00:00',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.post(reverse('excepcion-medico-list'), {
+            'fecha': '2030-01-01', 'motivo': 'Vacaciones',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['medico'], self.medico.id)
+        self.assertTrue(ExcepcionMedico.objects.filter(pk=response.data['id'], medico=self.medico).exists())
 
 
 class EspecialidadEndpointTests(APITestCase):
