@@ -1,5 +1,6 @@
-import { useMemo, useState, useSyncExternalStore } from "react";
-import { topesEpsStore, getUsoTope } from "../../context/mockData";
+import { useEffect, useMemo, useState } from "react";
+import { cargarTopes } from "../../api/superadmin";
+import { extraerMensajeError } from "../../api/axiosClient";
 
 const PERIODOS_FILTRO = [
   { value: "todos", label: "Todos" },
@@ -44,19 +45,22 @@ function StatCard({ icon, valor, etiqueta, color, tinte, sub }) {
 }
 
 export default function ReportesTopes() {
-  const topes = useSyncExternalStore(topesEpsStore.subscribe, topesEpsStore.getSnapshot);
+  const [topes, setTopes] = useState([]);
+  const [error, setError] = useState("");
   const [filtroPeriodo, setFiltroPeriodo] = useState("todos");
 
+  useEffect(() => {
+    cargarTopes().then(setTopes).catch((err) => setError(extraerMensajeError(err, "No fue posible cargar el reporte.")));
+  }, []);
+
   const reporte = useMemo(() => {
-    const activos = topes.filter(
-      (t) => t.activo && (filtroPeriodo === "todos" || t.periodo === filtroPeriodo)
-    );
+    const activos = topes.filter((t) => filtroPeriodo === "todos" || t.periodo === filtroPeriodo);
 
     const porEps = new Map();
     const conteoDonut = { normal: 0, alerta: 0, critico: 0 };
 
     activos.forEach((tope) => {
-      const uso = getUsoTope(tope);
+      const uso = tope.uso;
       const nivel = nivelUso(uso.porcentaje);
       conteoDonut[bucketDonut(nivel.key)] += 1;
 
@@ -77,10 +81,12 @@ export default function ReportesTopes() {
       if (tope.presupuestoMax != null) {
         acc.tienePresupuesto = true;
         acc.presupuestoMax += tope.presupuestoMax;
-        acc.gastado += uso.gastado ?? 0;
+        // El backend registra el tope presupuestal, pero no un costo por
+        // cita; por eso no se inventa un gasto en el reporte.
+        acc.gastado += 0;
       }
       acc.especialidades.push({
-        especialidad: tope.especialidad || "Todas las especialidades",
+        especialidad: "Todas las especialidades",
         periodo: tope.periodo,
         usadas: uso.usadas,
         maxCitas: tope.maxCitas,
@@ -131,6 +137,7 @@ export default function ReportesTopes() {
           Panorama del consumo de citas y presupuesto configurado para cada EPS.
         </p>
       </div>
+      {error && <p className="mb-4 text-sm text-[#BA1A1A] bg-[#FFDAD6] px-3 py-2 rounded-lg">{error}</p>}
 
       {/* Filtro de período */}
       <div className="flex items-center gap-1 bg-white border border-[#DCE8E5] rounded-full p-1 w-fit mb-6">

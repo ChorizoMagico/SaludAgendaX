@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.utils import timezone
 from .models import Cita, Paciente, EPS, Especialidad, Medico, Administrativo
 from .services import CitaService
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -694,16 +695,36 @@ class MedicoAdministrativoSerializer(serializers.ModelSerializer):
 
 class TopeEPSSerializer(serializers.ModelSerializer):
     eps_nombre = serializers.CharField(source='eps.nombre', read_only=True)
+    uso_actual = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = TopeEPS
-        fields = ['id', 'eps', 'eps_nombre', 'limite_citas', 'tipo_periodo', 'presupuesto_maximo']
+        fields = [
+            'id', 'eps', 'eps_nombre', 'limite_citas', 'tipo_periodo',
+            'presupuesto_maximo', 'uso_actual',
+        ]
         read_only_fields = ['id', 'eps_nombre']
 
     def validate_limite_citas(self, value):
         if value < 1:
             raise serializers.ValidationError('El límite de citas debe ser al menos 1.')
         return value
+
+    def get_uso_actual(self, obj):
+        """Uso real del tope dentro del período vigente, para el panel."""
+        inicio, fin = CitaService._periodo_para_fecha(obj, timezone.localdate())
+        usadas = Cita.objects.filter(
+            eps=obj.eps,
+            fecha__gte=inicio,
+            fecha__lt=fin,
+        ).exclude(estado='CANCELADA').count()
+        porcentaje = round((usadas / obj.limite_citas) * 100, 2) if obj.limite_citas else 0
+        return {
+            'usadas': usadas,
+            'porcentaje': porcentaje,
+            'periodo_inicio': inicio,
+            'periodo_fin': fin,
+        }
 
 
 class RestriccionFrecuenciaSerializer(serializers.ModelSerializer):
