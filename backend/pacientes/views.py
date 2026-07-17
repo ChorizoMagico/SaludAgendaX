@@ -64,6 +64,10 @@ def registro_paciente(request):
     Endpoint para registrar un nuevo paciente
     POST /api/pacientes/registro
     """
+
+    print("========== REGISTRO PACIENTE ==========")
+    print(request.method)
+    print(request.data)
     serializer = PacienteRegistroSerializer(data=request.data)
     
     if serializer.is_valid():
