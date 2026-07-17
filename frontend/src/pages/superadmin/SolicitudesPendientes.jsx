@@ -1,16 +1,5 @@
-import { useState, useSyncExternalStore, useEffect } from "react";
-import {
-  subscribeUsuarios,
-  getSolicitudesPendientes,
-  aprobarSolicitud,
-  rechazarSolicitud,
-} from "../../context/mockData";
+import { useState, useEffect } from "react";
 import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
-
-// NOTA (conexion FE-BE, punto 1): mismo toggle que AuthContext. Con
-// VITE_USE_MOCK=false esta pantalla lee/actúa contra
-// /api/solicitudes-pendientes/ en vez de mockData.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 const ROL_INFO = {
   medico: { label: "Médico", icon: "stethoscope" },
@@ -18,14 +7,13 @@ const ROL_INFO = {
 };
 
 export default function SolicitudesPendientes() {
-  const solicitudesMock = useSyncExternalStore(subscribeUsuarios, getSolicitudesPendientes);
   const [solicitudesReales, setSolicitudesReales] = useState([]);
-  const [cargando, setCargando] = useState(USE_MOCK ? false : true);
+  const [cargando, setCargando] = useState(true);
   const [idRechazando, setIdRechazando] = useState(null);
   const [motivoRechazo, setMotivoRechazo] = useState("");
   const [mensaje, setMensaje] = useState(null); // { tipo: "ok" | "error", texto }
 
-  const solicitudes = USE_MOCK ? solicitudesMock : solicitudesReales;
+  const solicitudes = solicitudesReales;
 
   function mostrarMensaje(tipo, texto) {
     setMensaje({ tipo, texto });
@@ -45,26 +33,17 @@ export default function SolicitudesPendientes() {
   }
 
   useEffect(() => {
-    if (!USE_MOCK) cargarSolicitudesReales();
+    cargarSolicitudesReales();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleAprobar(id, nombreCompleto) {
-    if (!USE_MOCK) {
-      try {
-        await axiosClient.post(`/solicitudes-pendientes/${id}/aprobar/`);
-        mostrarMensaje("ok", `Cuenta de ${nombreCompleto} aprobada.`);
-        cargarSolicitudesReales();
-      } catch (err) {
-        mostrarMensaje("error", extraerMensajeError(err, "No fue posible aprobar la solicitud."));
-      }
-      return;
-    }
-    const resultado = aprobarSolicitud(id);
-    if (resultado.ok) {
+    try {
+      await axiosClient.post(`/solicitudes-pendientes/${id}/aprobar/`);
       mostrarMensaje("ok", `Cuenta de ${nombreCompleto} aprobada.`);
-    } else {
-      mostrarMensaje("error", resultado.mensaje);
+      cargarSolicitudesReales();
+    } catch (err) {
+      mostrarMensaje("error", extraerMensajeError(err, "No fue posible aprobar la solicitud."));
     }
   }
 
@@ -75,25 +54,14 @@ export default function SolicitudesPendientes() {
 
   async function confirmarRechazo(nombreCompleto) {
     const id = idRechazando;
-    if (!USE_MOCK) {
-      setIdRechazando(null);
-      try {
-        await axiosClient.post(`/solicitudes-pendientes/${id}/rechazar/`, { motivo: motivoRechazo });
-        setMotivoRechazo("");
-        mostrarMensaje("ok", `Solicitud de ${nombreCompleto} rechazada.`);
-        cargarSolicitudesReales();
-      } catch (err) {
-        mostrarMensaje("error", extraerMensajeError(err, "No fue posible rechazar la solicitud."));
-      }
-      return;
-    }
-    const resultado = rechazarSolicitud(id, motivoRechazo);
     setIdRechazando(null);
-    setMotivoRechazo("");
-    if (resultado.ok) {
+    try {
+      await axiosClient.post(`/solicitudes-pendientes/${id}/rechazar/`, { motivo: motivoRechazo });
+      setMotivoRechazo("");
       mostrarMensaje("ok", `Solicitud de ${nombreCompleto} rechazada.`);
-    } else {
-      mostrarMensaje("error", resultado.mensaje);
+      cargarSolicitudesReales();
+    } catch (err) {
+      mostrarMensaje("error", extraerMensajeError(err, "No fue posible rechazar la solicitud."));
     }
   }
 
