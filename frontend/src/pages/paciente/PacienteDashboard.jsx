@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import format from "date-fns/format";
 import addDays from "date-fns/addDays";
 import {
@@ -29,6 +29,9 @@ import {
   EleccionInline,
 } from "../../context/ui";
 import { useAuth } from "../../context/AuthContext";
+import axiosClient, { extraerMensajeError } from "../../api/axiosClient";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 const TABS = [
   { id: "inicio", label: "Inicio", icon: "home" },
@@ -67,15 +70,68 @@ function franjaEsPasada(fechaStr, horaStr) {
   return combinarFechaYHora(fechaStr, horaStr) < new Date();
 }
 
+function sumarMinutos(hora, minutos) {
+  const [horas, mins] = hora.split(":").map(Number);
+  const total = horas * 60 + mins + minutos;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export default function PacienteDashboard() {
   const { user: paciente, updateProfile } = useAuth();
   const [tab, setTab] = useState("inicio");
+  const [catalogo, setCatalogo] = useState([]);
+  const [citasReales, setCitasReales] = useState([]);
+  const [slotsReales, setSlotsReales] = useState([]);
+  const [cargandoDatos, setCargandoDatos] = useState(!USE_MOCK);
+  const [errorDatos, setErrorDatos] = useState("");
 
   // Todas las citas viven en un store compartido con el dashboard del
   // médico (misma fuente de datos mock); aquí solo nos quedamos con las
   // del paciente autenticado.
   const todasLasCitas = useSyncExternalStore(citasStore.subscribe, citasStore.getSnapshot);
-  const citas = todasLasCitas.filter((c) => c.pacienteId === paciente.id);
+  const cargarCitasReales = async () => {
+    const { data } = await axiosClient.get("/citas/", { params: { page_size: 100 } });
+    setCitasReales(data.results ?? data);
+  };
+
+  useEffect(() => {
+    if (USE_MOCK) return;
+    let activo = true;
+    Promise.all([
+      axiosClient.get("/especialidades/"),
+      axiosClient.get("/citas/", { params: { page_size: 100 } }),
+    ])
+      .then(([especialidades, citasApi]) => {
+        if (!activo) return;
+        setCatalogo(especialidades.data ?? []);
+        setCitasReales(citasApi.data.results ?? citasApi.data);
+      })
+      .catch((error) => activo && setErrorDatos(extraerMensajeError(error, "No fue posible cargar tus citas.")))
+      .finally(() => activo && setCargandoDatos(false));
+    return () => { activo = false; };
+  }, []);
+
+  const medicosReales = useMemo(
+    () => catalogo.flatMap((especialidad) => (especialidad.medicos ?? []).map((medico) => ({
+      ...medico,
+      especialidadId: especialidad.id,
+      especialidad: especialidad.nombre,
+    }))),
+    [catalogo]
+  );
+  const especialidades = USE_MOCK ? ESPECIALIDADES : catalogo.map((especialidad) => especialidad.nombre);
+  const citas = USE_MOCK
+    ? todasLasCitas.filter((c) => c.pacienteId === paciente.id)
+    : citasReales.map((cita) => ({
+        id: cita.id,
+        medicoId: cita.medico,
+        especialidad: catalogo.find((especialidad) => especialidad.id === cita.especialidad)?.nombre ?? "Especialidad",
+        sede: "Sede por confirmar",
+        fecha: cita.fecha,
+        hora: cita.hora_inicio?.slice(0, 5),
+        estado: cita.estado === "CANCELADA" ? "cancelada" : "agendada",
+        motivo: cita.motivo_consulta ?? "",
+      }));
 
   // ---------- Estado del wizard de agendamiento/reprogramación ----------
   // Pasos: 1 especialidad · 2 sede · 3 médico · 4 fecha + franja + motivo · 5 confirmación
@@ -101,15 +157,17 @@ export default function PacienteDashboard() {
   const historial = citas.filter((c) => c.estado === "completada" || c.estado === "cancelada");
   const proximaCita = [...proximas].sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
 
-  const medicosFiltrados = getMedicosDisponibles().filter(
-    (m) => m.especialidades.includes(wizardEspecialidad) && m.sede === wizardSede
-  );
+  const medicosFiltrados = USE_MOCK
+    ? getMedicosDisponibles().filter((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === wizardSede)
+    : medicosReales.filter((m) => m.especialidad === wizardEspecialidad && m.activo);
 
-  const sedesConMedico = SEDES.filter((sede) =>
-    getMedicosDisponibles().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede)
-  );
+  const sedesConMedico = USE_MOCK
+    ? SEDES.filter((sede) => getMedicosDisponibles().some((m) => m.especialidades.includes(wizardEspecialidad) && m.sede === sede))
+    : ["Sede por confirmar"];
 
-  const medicoElegido = wizardMedicoId ? getMedicoPorId(wizardMedicoId) : null;
+  const medicoElegido = wizardMedicoId
+    ? (USE_MOCK ? getMedicoPorId(wizardMedicoId) : medicosReales.find((m) => m.id === wizardMedicoId))
+    : null;
 
   // Franjas que ese médico ya tiene ocupadas (activas) en la fecha elegida.
   // Si estás reprogramando, tu propia cita actual no cuenta como "ocupada".
@@ -126,9 +184,30 @@ export default function PacienteDashboard() {
   );
 
   // Oculta franjas que ya pasaron (si la fecha es hoy) o que ya están ocupadas
-  const franjasDisponibles = FRANJAS_MOCK.filter(
-    (f) => !franjaEsPasada(wizardFecha, f) && !franjasOcupadas.has(f)
-  );
+  const franjasDisponibles = USE_MOCK
+    ? FRANJAS_MOCK.filter((f) => !franjaEsPasada(wizardFecha, f) && !franjasOcupadas.has(f))
+    : slotsReales;
+
+  useEffect(() => {
+    if (USE_MOCK || !wizardMedicoId || !wizardFecha) return;
+    let activo = true;
+    axiosClient.get("/disponibilidad/", {
+      params: {
+        medico_id: wizardMedicoId,
+        fecha_inicio: `${wizardFecha}T00:00:00`,
+        fecha_fin: `${wizardFecha}T23:59:59`,
+        duracion_minutos: 30,
+      },
+    })
+      .then(({ data }) => {
+        if (!activo) return;
+        setSlotsReales((data.slots_disponibles ?? [])
+          .map((slot) => slot.fecha_hora.slice(11, 16))
+          .filter((hora) => !franjaEsPasada(wizardFecha, hora)));
+      })
+      .catch(() => activo && setSlotsReales([]));
+    return () => { activo = false; };
+  }, [wizardMedicoId, wizardFecha]);
 
   function resetWizard() {
     setWizardPaso(1);
@@ -163,11 +242,11 @@ export default function PacienteDashboard() {
     setCitaReprogramando(cita.id);
     setWizardEspecialidad(cita.especialidad);
     setWizardSede(cita.sede);
-    setWizardMedicoId(mantenerMedico ? cita.medicoId : null);
+    setWizardMedicoId(!USE_MOCK || mantenerMedico ? cita.medicoId : null);
     setWizardMotivo(cita.motivo);
     setWizardFecha(cita.fecha < hoyISO() ? fechaPorDefecto() : cita.fecha);
     setWizardFranja(null);
-    setWizardPaso(mantenerMedico ? 4 : 3);
+    setWizardPaso(!USE_MOCK || mantenerMedico ? 4 : 3);
     setCitaPreguntandoReprogramar(null);
     setTab("agendar");
   }
@@ -202,7 +281,7 @@ export default function PacienteDashboard() {
     return { ok: true };
   }
 
-  function confirmarCita() {
+  async function confirmarCita() {
     if (wizardFecha < hoyISO() || franjaEsPasada(wizardFecha, wizardFranja)) {
       setWizardMensaje("Ese horario ya pasó. Elige una fecha u hora futura.");
       return;
@@ -223,10 +302,12 @@ export default function PacienteDashboard() {
       return;
     }
 
-    const { ok, mensaje } = validarReglasNegocio();
-    if (!ok) {
-      setWizardMensaje(mensaje);
-      return;
+    if (USE_MOCK) {
+      const { ok, mensaje } = validarReglasNegocio();
+      if (!ok) {
+        setWizardMensaje(mensaje);
+        return;
+      }
     }
 
     // Si ese médico/fecha/hora tenía una cita cancelada de otro paciente
@@ -241,6 +322,35 @@ export default function PacienteDashboard() {
     );
     if (citaCanceladaEnEseEspacio) {
       citasStore.eliminar(citaCanceladaEnEseEspacio.id);
+    }
+
+    if (!USE_MOCK) {
+      try {
+        if (citaReprogramando) {
+          await axiosClient.patch(`/citas/${citaReprogramando}/reprogramar/`, {
+            fecha: wizardFecha,
+            hora_inicio: `${wizardFranja}:00`,
+            hora_fin: `${sumarMinutos(wizardFranja, 30)}:00`,
+          });
+        } else {
+          const especialidad = catalogo.find((item) => item.nombre === wizardEspecialidad);
+          await axiosClient.post("/citas/", {
+            medico: wizardMedicoId,
+            especialidad: especialidad?.id,
+            fecha: wizardFecha,
+            hora_inicio: `${wizardFranja}:00`,
+            hora_fin: `${sumarMinutos(wizardFranja, 30)}:00`,
+            motivo_consulta: wizardMotivo,
+            tipo_cita: "consulta_general",
+          });
+        }
+        await cargarCitasReales();
+        resetWizard();
+        setTab("citas");
+      } catch (error) {
+        setWizardMensaje(extraerMensajeError(error, "No fue posible guardar la cita."));
+      }
+      return;
     }
 
     if (citaReprogramando) {
@@ -270,7 +380,19 @@ export default function PacienteDashboard() {
     setTab("citas");
   }
 
-  function confirmarCancelacion(id) {
+  async function confirmarCancelacion(id) {
+    if (!USE_MOCK) {
+      try {
+        await axiosClient.patch(`/citas/${id}/cancelar/`, { motivo_cancelacion: motivoCancelacion });
+        await cargarCitasReales();
+      } catch (error) {
+        setErrorDatos(extraerMensajeError(error, "No fue posible cancelar la cita."));
+        return;
+      }
+      setCitaCancelando(null);
+      setMotivoCancelacion("");
+      return;
+    }
     citasStore.actualizar(id, { estado: "cancelada" });
     setCitaCancelando(null);
     setMotivoCancelacion("");
@@ -286,6 +408,8 @@ export default function PacienteDashboard() {
         <DashboardNav tabs={TABS} activo={tab} onChange={irATab} />
 
         <main className="flex-1 min-w-0">
+          {cargandoDatos && <p className="text-sm text-[#48605C]">Cargando información...</p>}
+          {errorDatos && <p className="mb-4 text-sm text-[#BA1A1A] bg-[#FFDAD6] px-3 py-2 rounded-lg">{errorDatos}</p>}
           {/* ---------------- INICIO ---------------- */}
           {tab === "inicio" && (
             <div className="flex flex-col gap-7">
@@ -348,7 +472,7 @@ export default function PacienteDashboard() {
                           pregunta={`¿Deseas reprogramar con Dr(a). ${nombreMedico(c.medicoId)} o buscar otro médico?`}
                           opciones={[
                             { label: `Mantener con Dr(a). ${nombreMedico(c.medicoId)}`, destacada: true, onClick: () => iniciarReprogramacion(c, true) },
-                            { label: "Buscar otro médico", onClick: () => iniciarReprogramacion(c, false) },
+                            ...(USE_MOCK ? [{ label: "Buscar otro médico", onClick: () => iniciarReprogramacion(c, false) }] : []),
                           ]}
                         />
                       )}
@@ -407,13 +531,13 @@ export default function PacienteDashboard() {
                 <div className="flex flex-col gap-4 mt-6">
                   <label className="text-sm font-semibold text-[#0F3D3E]">Elige una especialidad</label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {ESPECIALIDADES.map((esp) => (
+                    {especialidades.map((esp) => (
                       <OpcionPill
                         key={esp}
                         seleccionado={wizardEspecialidad === esp}
                         onClick={() => {
                           setWizardEspecialidad(esp);
-                          setWizardSede("");
+                          setWizardSede(USE_MOCK ? "" : "Sede por confirmar");
                           setWizardMedicoId(null);
                         }}
                         icon="medical_information"
@@ -421,7 +545,7 @@ export default function PacienteDashboard() {
                       />
                     ))}
                   </div>
-                  <BotonContinuar disabled={!wizardEspecialidad} onClick={() => setWizardPaso(2)} />
+                  <BotonContinuar disabled={!wizardEspecialidad} onClick={() => setWizardPaso(USE_MOCK ? 2 : 3)} />
                 </div>
               )}
 
@@ -450,7 +574,7 @@ export default function PacienteDashboard() {
                   </div>
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardSede} onClick={() => setWizardPaso(3)} />
-                    <button onClick={() => { setMensaje(""); setWizardPaso(1); }} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setWizardMensaje(""); setWizardPaso(1); }} className="text-sm text-[#48605C] hover:underline">
                       ← Cambiar especialidad
                     </button>
                   </div>
@@ -481,8 +605,8 @@ export default function PacienteDashboard() {
                   </div>
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardMedicoId} onClick={() => setWizardPaso(4)} />
-                    <button onClick={() => { setMensaje(""); setWizardPaso(2); }} className="text-sm text-[#48605C] hover:underline">
-                      ← Cambiar sede
+                    <button onClick={() => { setWizardMensaje(""); setWizardPaso(USE_MOCK ? 2 : 1); }} className="text-sm text-[#48605C] hover:underline">
+                      ← {USE_MOCK ? "Cambiar sede" : "Cambiar especialidad"}
                     </button>
                   </div>
                 </div>
@@ -534,7 +658,7 @@ export default function PacienteDashboard() {
 
                   <div className="flex items-center gap-4 mt-2">
                     <BotonContinuar disabled={!wizardFecha || !wizardFranja} onClick={() => setWizardPaso(5)} />
-                    <button onClick={() => { setMensaje(""); setWizardPaso(3); }} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setWizardMensaje(""); setWizardPaso(3); }} className="text-sm text-[#48605C] hover:underline">
                       ← Cambiar médico
                     </button>
                   </div>
@@ -581,7 +705,7 @@ export default function PacienteDashboard() {
                       <span className="material-symbols-outlined text-lg">check</span>
                       Confirmar cita
                     </button>
-                    <button onClick={() => { setMensaje(""); setWizardPaso(4); }} className="text-sm text-[#48605C] hover:underline">
+                    <button onClick={() => { setWizardMensaje(""); setWizardPaso(4); }} className="text-sm text-[#48605C] hover:underline">
                       ← Volver y editar
                     </button>
                   </div>
@@ -600,7 +724,7 @@ export default function PacienteDashboard() {
   );
 
   function nombreMedico(medicoId) {
-    const m = getMedicoPorId(medicoId);
+    const m = USE_MOCK ? getMedicoPorId(medicoId) : medicosReales.find((medico) => medico.id === medicoId);
     return m ? `${m.nombre} ${m.apellido}` : "—";
   }
 }
