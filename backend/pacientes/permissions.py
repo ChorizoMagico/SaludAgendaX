@@ -37,6 +37,13 @@ class IsAdministrativeOrAuthenticatedPatient(BasePermission):
         return Paciente.objects.filter(usuario=user).exists()
 
 
+class IsAdministrativeOnlyUser(BasePermission):
+    """Restringe todas las operaciones, incluida la lectura, a administración."""
+
+    def has_permission(self, request, view):
+        return IsAdministrativeUser.is_admin_user(request.user)
+
+
 class IsSuperAdministrativeUser(BasePermission):
     """
     Restringe a superadministrador (grupo 'superadministrador' o superusuario
