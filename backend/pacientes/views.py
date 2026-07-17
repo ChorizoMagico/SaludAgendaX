@@ -1208,7 +1208,7 @@ class SolicitudesPendientesListView(APIView):
     a la espera de aprobación de un superadministrador.
     """
     authentication_classes = [JWTAuthentication, SessionAuthentication]
-    permission_classes = [IsSuperAdministrativeUser]
+    permission_classes = [IsAdministrativeOnlyUser]
 
     def get(self, request):
         medicos = (
@@ -1235,7 +1235,7 @@ class AprobarSolicitudView(APIView):
     es lo que usan los permisos (IsAdministrativeUser) para reconocerlo.
     """
     authentication_classes = [JWTAuthentication, SessionAuthentication]
-    permission_classes = [IsSuperAdministrativeUser]
+    permission_classes = [IsAdministrativeOnlyUser]
 
     def post(self, request, solicitud_id):
         Modelo, instancia = _resolver_solicitud(solicitud_id)
@@ -1272,7 +1272,7 @@ class RechazarSolicitudView(APIView):
     User.is_active=False (no se elimina: queda historial de la solicitud).
     """
     authentication_classes = [JWTAuthentication, SessionAuthentication]
-    permission_classes = [IsSuperAdministrativeUser]
+    permission_classes = [IsAdministrativeOnlyUser]
 
     def post(self, request, solicitud_id):
         Modelo, instancia = _resolver_solicitud(solicitud_id)
