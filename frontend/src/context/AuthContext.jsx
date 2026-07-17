@@ -34,10 +34,8 @@ function leerSesion() {
   }
 }
 
-function guardarSesion(token, user, expiraEn, refresh = null) {
-  // `refresh` es opcional porque las sesiones mock no tienen uno real; en
-  // ese caso axiosClient simplemente no intentará renovar (ver interceptor).
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, user, expiraEn, refresh }));
+function guardarSesion(token, user, expiraEn) {
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, user, expiraEn }));
 }
 
 function borrarSesion() {
@@ -56,22 +54,18 @@ function borrarSesion() {
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Conexión real al backend.
+// Conexión real al backend (solo rol "paciente" por ahora).
 //
-// Los 3 roles autorregistrables (paciente/medico/administrativo) ya tienen
-// login/registro reales (punto 1). medico/administrativo se registran
-// 'pendientes' — el backend no emite tokens para ellos (ver realRegisterMedico
-// / realRegisterAdministrativo más abajo), así que register() más adelante
-// no crea sesión para esos casos. superadministrador sigue sin autorregistro
-// (Register.jsx ni siquiera lo ofrece como opción) y perfil/citas/dashboard
-// de médico/administrativo todavía no tienen su propio endpoint, así que esas
-// pantallas (fuera de login/registro) siguen en mock por ahora.
+// El backend solo tiene implementados login/registro para pacientes; los
+// roles medico/administrativo/superadministrador no tienen todavía un flujo
+// propio (no hay alta de médico/admin, ni "solicitud de autorización" en el
+// backend), así que ESOS roles siguen usando el mock incluso con
+// VITE_USE_MOCK=false. Ver el resumen de la tarea para el detalle completo.
 // ─────────────────────────────────────────────────────────────────────────
 async function realLogin(cedula, password) {
   // El backend recibe el campo `username` de SimpleJWT, pero internamente
   // ahora acepta también el número de documento (cédula) y lo resuelve al
-  // username real, sin importar el rol (paciente/medico/administrativo) —
-  // ver PacienteTokenSerializer en el backend.
+  // username real (ver PacienteTokenSerializer en el backend).
   const { data } = await axiosClient.post("/login/", { username: cedula, password });
   return { data: { token: data.access, refresh: data.refresh, user: data.user } };
 }
@@ -93,39 +87,6 @@ async function realRegisterPaciente(datos) {
   return { data: { token: data.access, refresh: data.refresh, user: data.user } };
 }
 
-// NOTA (conexion FE-BE, punto 1): a diferencia de realRegisterPaciente, el
-// backend NO devuelve access/refresh acá — la cuenta queda 'pendiente' hasta
-// que un superadministrador la aprueba (ver AprobarSolicitudView), así que
-// no hay token que guardar todavía. register() más abajo no crea sesión
-// cuando `pendiente` viene en true.
-async function realRegisterMedico(datos) {
-  const { data } = await axiosClient.post("/medicos/registro/", {
-    email: datos.correo,
-    password: datos.password,
-    password_confirm: datos.confirmPassword ?? datos.password,
-    nombres: datos.nombres,
-    apellidos: datos.apellidos,
-    num_documento: datos.cedula,
-    telefono: datos.telefono ?? "",
-    especialidad: datos.especialidad,
-    registro_medico: datos.numeroRegistroMedico,
-  });
-  return { data };
-}
-
-async function realRegisterAdministrativo(datos) {
-  const { data } = await axiosClient.post("/administrativos/registro/", {
-    email: datos.correo,
-    password: datos.password,
-    password_confirm: datos.confirmPassword ?? datos.password,
-    nombres: datos.nombres,
-    apellidos: datos.apellidos,
-    num_documento: datos.cedula,
-    telefono: datos.telefono ?? "",
-  });
-  return { data };
-}
-
 // NOTA (conexion FE-BE): recuperar/restablecer contraseña ya usan el
 // backend real (antes seguían siempre en mock). El backend firma el reset
 // con `uidb64` + `token` (no solo `token`, como hacía el mock), por eso
@@ -133,21 +94,6 @@ async function realRegisterAdministrativo(datos) {
 async function realForgotPassword(correo) {
   const { data } = await axiosClient.post("/recuperar-contrasena/", { email: correo });
   return { data: { enviado: true, mensaje: data.mensaje } };
-}
-
-// NOTA (conexion FE-BE): /perfil/ (PUT) ya funciona en el backend y ahora
-// también devuelve `telefono`. Solo se usa para rol "paciente": el email no
-// es editable ahí (en el backend viene de User.email, de solo lectura), así
-// que ese campo del formulario se ignora silenciosamente si el usuario lo
-// cambia. EPS tampoco se envía (no es editable por el paciente).
-async function realUpdateProfile(cambios) {
-  const { data } = await axiosClient.put("/perfil/", {
-    primer_nombre: cambios.nombre,
-    apellido: cambios.apellido,
-    telefono: cambios.telefono,
-    direccion: cambios.direccion,
-  });
-  return data.paciente;
 }
 
 async function realResetPassword(uidb64, token, nuevaPassword) {
@@ -280,7 +226,7 @@ export function AuthProvider({ children }) {
     const actual = leerSesion();
     if (!actual) return;
     const expiraEn = Date.now() + SESSION_DURATION_MS;
-    guardarSesion(actual.token, actual.user, expiraEn, actual.refresh);
+    guardarSesion(actual.token, actual.user, expiraEn);
     programarAutoLogout(expiraEn);
   }, [programarAutoLogout]);
 
@@ -332,7 +278,7 @@ export function AuthProvider({ children }) {
       setUser((prev) => {
         if (prev && JSON.stringify(prev) === JSON.stringify(actualizado)) return prev;
         const sesion = leerSesion();
-        if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn, sesion.refresh);
+        if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn);
         return actualizado;
       });
     });
@@ -345,7 +291,7 @@ export function AuthProvider({ children }) {
       : await realLogin(cedula, password);
 
     const expiraEn = Date.now() + SESSION_DURATION_MS;
-    guardarSesion(data.token, data.user, expiraEn, data.refresh);
+    guardarSesion(data.token, data.user, expiraEn);
     // axiosClient.defaults.headers.common.Authorization = `Bearer ${data.token}`;
     setSessionExpired(false);
     setUser(data.user);
@@ -354,39 +300,16 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  // NOTA (conexion FE-BE, punto 1): los 3 roles autorregistrables ya pegan
-  // al backend real cuando USE_MOCK=false. paciente vuelve con
-  // access/refresh (sesión inmediata, igual que antes); medico/administrativo
-  // vuelven 'pendientes' (sin tokens), así que NO se guarda sesión ni se
-  // actualiza `user` para esos dos — Register.jsx ya maneja esto mostrando
-  // la pantalla de "pendiente de autorización" sin depender de una sesión
-  // activa (ver ROLES_CON_AUTORIZACION en Register.jsx).
   async function register(datos) {
-    if (USE_MOCK) {
-      const { data } = await mockRegister(datos);
-      return _iniciarSesionPorRegistro(data);
-    }
+    // Solo el rol "paciente" tiene un flujo real en el backend hoy.
+    // medico/administrativo siguen en mock (ver nota más arriba).
+    const usaBackendReal = !USE_MOCK && datos.rol === "paciente";
+    const { data } = usaBackendReal
+      ? await realRegisterPaciente(datos)
+      : await mockRegister(datos);
 
-    if (datos.rol === "medico") {
-      await realRegisterMedico(datos);
-      return { rol: "medico", pendiente: true };
-    }
-
-    if (datos.rol === "administrativo") {
-      await realRegisterAdministrativo(datos);
-      return { rol: "administrativo", pendiente: true };
-    }
-
-    const { data } = await realRegisterPaciente(datos);
-    return _iniciarSesionPorRegistro(data);
-  }
-
-  // Extraído de register(): arranca la sesión con lo que devolvió el
-  // backend/mock cuando el registro SÍ deja la cuenta activa de inmediato
-  // (paciente, o cualquier rol en modo mock).
-  function _iniciarSesionPorRegistro(data) {
     const expiraEn = Date.now() + SESSION_DURATION_MS;
-    guardarSesion(data.token, data.user, expiraEn, data.refresh);
+    guardarSesion(data.token, data.user, expiraEn);
     // axiosClient.defaults.headers.common.Authorization = `Bearer ${data.token}`;
     setSessionExpired(false);
     setUser(data.user);
@@ -395,47 +318,17 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  // Cuando axiosClient no puede renovar la sesión (el refresh también venció,
-  // o no había refresh porque era una sesión mock), dispara este evento en
-  // vez de dejar las llamadas fallando en silencio. Se resuelve igual que un
-  // logout por expiración normal, para reusar el mismo aviso de UI.
-  useEffect(() => {
-    function alVencerSesion() {
-      logout(true);
-    }
-    window.addEventListener("auth:sessionExpired", alVencerSesion);
-    return () => window.removeEventListener("auth:sessionExpired", alVencerSesion);
-  }, [logout]);
-
-  // NOTA (conexion FE-BE): updateProfile ahora sí llama a /perfil/ para el
-  // rol paciente (el único que tiene ese endpoint funcionando en el backend).
-  // medico/administrativo/superadministrador siguen en mock porque el
-  // backend todavía no tiene perfil propio para esos roles (ver resumen).
-  //
-  // El resto del dashboard de paciente (citas, historial, calendario) sigue
-  // leyendo de mockData en esta tarea, así que el objeto `user` queda con una
-  // mezcla: los campos de perfil (nombre/apellido/telefono/direccion) vienen
-  // del backend real, y el resto (id, rol, eps, cedula) se conserva tal cual
-  // vino del login real, sin tocar mockData para nada relacionado a citas.
+  // NOTA (pendiente, NO conectado en esta tarea): updateProfile sigue usando
+  // el mock siempre, incluso con VITE_USE_MOCK=false. El backend expone
+  // `/perfil/` para esto, pero el resto del dashboard de paciente (citas,
+  // calendario, etc.) todavía lee/escribe sobre mockData, así que conectar
+  // solo updateProfile dejaría al usuario editado con datos inconsistentes
+  // entre back y front hasta que se conecte todo el dashboard.
   async function updateProfile(cambios) {
-    const usaBackendReal = !USE_MOCK && user?.rol === "paciente";
-
-    let actualizado;
-    if (usaBackendReal) {
-      const perfil = await realUpdateProfile(cambios);
-      actualizado = {
-        ...user,
-        nombre: perfil.primer_nombre,
-        apellido: perfil.apellido,
-        telefono: perfil.telefono,
-        direccion: perfil.direccion,
-      };
-    } else {
-      actualizado = actualizarUsuarioMock(user.id, cambios);
-    }
+    const actualizado = actualizarUsuarioMock(user.id, cambios);
 
     const sesion = leerSesion();
-    if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn, sesion.refresh);
+    if (sesion) guardarSesion(sesion.token, actualizado, sesion.expiraEn);
     setUser(actualizado);
     return actualizado;
   }
